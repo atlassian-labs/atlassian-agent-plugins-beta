@@ -4,15 +4,10 @@
 # GitHub team before the repository goes public — a single owner is a review bottleneck
 # and an orphaning risk, which is the thing .atlassian/OWNER exists to prevent.
 #
-# NOTE: @jkay is inferred from the jkay@atlassian.com staff ID and is UNVERIFIED as a
-# GitHub handle. A handle GitHub does not recognise makes this file silently inert:
-# reviewers are never auto-requested and the rules never apply. Confirm it once the
-# repository exists (Settings → Branches shows CODEOWNERS parse errors).
-
-* @jkay
+* @jkay-atlas
 
 # Plugin content — the product is the instruction text, so review it like code.
-/plugins/ @jkay
+/plugins/ @jkay-atlas
 
 # Release channel wiring: the marketplace manifest decides what beta users receive.
-/.claude-plugin/ @jkay
+/.claude-plugin/ @jkay-atlas
