@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "atlassian-beta-marketplace",
+  "description": "Atlassian Beta release channel — pre-release Atlassian agent plugins for Claude Code.",
+  "owner": {
+    "name": "Atlassian",
+    "url": "https://www.atlassian.com"
+  },
+  "plugins": [
+    {
+      "name": "atlassian-beta",
+      "displayName": "Atlassian (Beta)",
+      "source": "./plugins/atlassian-beta",
+      "description": "Beta channel for the Atlassian agent plugin. Drive Jira from your terminal: read and search work items, triage duplicates, create and update, transition and comment, and execute the work an item describes. Pre-release — behaviour can change between releases.",
+      "author": {
+        "name": "Atlassian",
+        "url": "https://www.atlassian.com"
+      },
+      "homepage": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
+      "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
+      "license": "Apache-2.0",
+      "category": "productivity",
+      "tags": ["atlassian", "beta", "jira", "workflow", "jql", "teamwork-graph"],
+      "strict": true
+    }
+  ]
+}

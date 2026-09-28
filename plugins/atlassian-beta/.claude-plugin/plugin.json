@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "atlassian-beta",
+  "displayName": "Atlassian (Beta)",
+  "version": "0.0.1",
+  "description": "Beta channel for the Atlassian agent plugin. Drive Jira from your terminal: read and search work items, triage duplicates, create and update, transition and comment, and execute the work an item describes. Pre-release software — behaviour, commands and output can change between releases.",
+  "author": {
+    "name": "Atlassian",
+    "url": "https://www.atlassian.com"
+  },
+  "homepage": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
+  "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
+  "license": "Apache-2.0",
+  "keywords": ["atlassian", "beta", "jira", "work item", "jql", "workflow", "triage", "duplicates", "teamwork graph"]
+}

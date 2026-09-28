@@ -1,0 +1,72 @@
+name: Validate
+
+# Security posture for a public repository (Atlassian OSS / Credo requirement):
+#
+#   * `pull_request` — NOT `pull_request_target`. A fork PR runs against the merge ref with
+#     a read-only GITHUB_TOKEN and no access to repository secrets, so a malicious PR
+#     cannot exfiltrate anything from this workflow.
+#   * This workflow uses no secrets at all. Do not add one. If a future job genuinely needs
+#     a secret, it must run from a separate `push`-triggered workflow, never from a
+#     fork-reachable trigger.
+#   * Untrusted PRs must not autobuild. GitHub's repository setting
+#     Settings → Actions → General → "Require approval for all external contributors"
+#     must be enabled — a workflow file cannot enforce that on its own.
+#
+# See https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege, applied to every job in this workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate plugins and formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      # Pinned deliberately: `plugin validate --strict` gates what beta users receive,
+      # so an unpinned CLI could change the verdict without a commit here.
+      - name: Validate marketplace manifest
+        run: npx --yes @anthropic-ai/claude-code@2.1.186 plugin validate . --strict
+
+      - name: Validate atlassian-beta plugin
+        run: npx --yes @anthropic-ai/claude-code@2.1.186 plugin validate plugins/atlassian-beta --strict
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run repository and plugin tests
+        run: npm test

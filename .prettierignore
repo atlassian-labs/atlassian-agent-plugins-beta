@@ -1,0 +1,11 @@
+*.jsonc
+node_modules/
+
+# Kept byte-identical to the Atlassian OSS templates at
+# bitbucket.org/atlassian/oss-templates so a Credo reviewer can diff them cleanly.
+# Do not reformat these — prettier rewrites the bullet markers and trailing newline.
+LICENSE
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+.atlassian/OWNER
+plugins/*/LICENSE
