@@ -4,9 +4,11 @@
 
 ## The channel
 
-This repository _is_ the channel. There is no build step and no registry: a beta user
-adds the repository as a marketplace and Claude Code reads
-`.claude-plugin/marketplace.json` straight from the default branch.
+This repository _is_ the channel. There is no registry: a beta user adds the repository as a
+marketplace and the host reads `.claude-plugin/marketplace.json` (Claude Code) or
+`.agents/plugins/marketplace.json` (Codex) straight from the default branch. The plugin itself
+is built elsewhere: Atlassian's release tooling deletes and recreates `plugins/jira/`
+on every release, so nothing kept inside that directory survives.
 
 Consequences:
 
@@ -20,16 +22,11 @@ Consequences:
 
 ## Versioning
 
-`plugins/<plugin>/.claude-plugin/plugin.json` carries the version. Beta users have no
-lockfile and no pinning, so the version is the only way they can tell what they are
-running.
-
-- Bump for any user-visible change: skill behaviour, command names, output shape, hook
-  behaviour, README guidance.
-- Do not bump for internal-only edits: CI, repo docs, formatting.
-- Semver, with beta latitude: minor for new or changed behaviour, patch for fixes.
-  Breaking changes are expected in beta — take them, but say so in the PR's beta-impact
-  section.
+`plugins/<plugin>/.claude-plugin/plugin.json` carries the version, set by the release that
+wrote the directory from the plugin's source manifest; it is not bumped here. Beta users
+have no lockfile and no pinning, so the version is the only way they can tell what they are
+running. Breaking changes are expected in beta — take them, but say so in the PR's
+beta-impact section.
 
 ## Pre-release honesty
 

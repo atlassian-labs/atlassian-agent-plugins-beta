@@ -8,27 +8,29 @@ This guide takes you from nothing to a working install of the `jira` plugin.
 
 ## 1. Check the prerequisites
 
-| Requirement                                     | Check with           | Notes                                            |
-| ----------------------------------------------- | -------------------- | ------------------------------------------------ |
-| [Claude Code](https://code.claude.com/docs)     | `claude --version`   | The plugin targets Claude Code specifically.     |
-| Node.js 20.6 or later                           | `node --version`     | Needed by the plugin's hooks and scripts.        |
-| An Atlassian account with access to a Jira site | Sign in to your site | The plugin acts as you; it grants no new access. |
+| Requirement                                                                                 | Check with                              | Notes                                            |
+| ------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------ |
+| [Claude Code](https://code.claude.com/docs) or [Codex](https://developers.openai.com/codex) | `claude --version` or `codex --version` | Either host loads the plugin.                    |
+| Node.js 20.6 or later                                                                       | `node --version`                        | Needed by the plugin's hooks and scripts.        |
+| An Atlassian account with access to a Jira site                                             | Sign in to your site                    | The plugin acts as you; it grants no new access. |
 
-If `claude` is not found, install Claude Code first — nothing below will work without it.
+If neither `claude` nor `codex` is found, install one first — nothing below will work without it.
 
 ## 2. Add the marketplace
 
-A _marketplace_ is a git repository Claude Code reads plugin listings from. Adding one
-does not install anything; it tells Claude Code where to look.
+A _marketplace_ is a git repository your agent reads plugin listings from. Adding one does
+not install anything; it tells the host where to look.
 
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
+codex plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
 ```
 
 ## 3. Install the plugin
 
 ```bash
 claude plugin install jira@atlassian-beta-marketplace
+codex plugin add jira@atlassian-beta-marketplace
 ```
 
 The `@atlassian-beta-marketplace` suffix names the marketplace to install from. It is
@@ -36,10 +38,11 @@ required when more than one marketplace offers a plugin with the same name.
 
 ## 4. Restart and verify
 
-Plugins load at session start, so **start a new Claude Code session**. Then:
+Plugins load at session start, so **start a new session**. Then:
 
 ```bash
 claude plugin list
+codex plugin list
 ```
 
 `jira` should appear as installed and enabled, with its version. If it does not,
@@ -52,10 +55,9 @@ see [troubleshooting.md](troubleshooting.md).
      - how a user signs in, and that OAuth needs a real interactive terminal
      - how a user confirms setup succeeded -->
 
-The plugin drives an Atlassian CLI that it does not itself bundle. Setup and sign-in
-instructions ship with the skill content — see
-[`plugins/jira/README.md`](../plugins/jira/README.md) for the state of
-the release you have installed.
+The plugin drives the Atlassian Teamwork Graph CLI, `twg`, which it does not bundle. Install
+it from <https://developer.atlassian.com/cloud/twg-cli/getting-started/installation/> and sign
+in with `twg login`; sign-in is interactive and needs a real terminal.
 
 ## 6. Run your first task
 

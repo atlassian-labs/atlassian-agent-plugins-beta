@@ -14,7 +14,8 @@ bug.
 
 ```
 .claude-plugin/marketplace.json   # what beta users can install — the release gate
-plugins/jira/           # the plugin: manifest, README, skills, agents, hooks
+.agents/plugins/marketplace.json  # the same listing, read by Codex
+plugins/jira/           # the plugin, written wholesale by each release
 docs/                             # consumer-facing documentation
 docs/llm/                         # guidance for coding agents working in this repo
 .github/workflows/validate.yml    # CI
@@ -37,7 +38,7 @@ not run.
 ```bash
 npm run format:check   # prettier
 npm run validate       # claude plugin validate, --strict, marketplace + every plugin
-npm test               # plugin hook and skill-script unit tests
+npm test               # repository invariants: manifests, governance files, no internal references
 ```
 
 CI runs the same three on every pull request.
@@ -74,10 +75,11 @@ claude plugin marketplace remove atlassian-beta-marketplace
 Merging to `main` publishes. There is no staging environment between your pull request and
 a beta user's next update.
 
-Bump `version` in `plugins/jira/.claude-plugin/plugin.json` for any user-visible
-change — skill behaviour, command names, output shape, hook behaviour, README guidance. Do
-not bump for CI, repo docs, or formatting. Beta users have no lockfile, so the version is
-the only way they can tell what they are running.
+`plugins/jira/` is written by Atlassian's release tooling, which deletes and
+recreates the directory on every release, version included. Do not edit it by hand: the next
+release overwrites it, and nothing kept inside it survives. Beta users have no lockfile, so
+the version in `plugins/jira/.claude-plugin/plugin.json` is the only way they can
+tell what they are running.
 
 Full detail: [`docs/llm/common/release-channel.md`](llm/common/release-channel.md).
 

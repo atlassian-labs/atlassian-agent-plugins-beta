@@ -56,6 +56,14 @@ jobs:
       - name: Validate jira plugin
         run: npx --yes @anthropic-ai/claude-code@2.1.186 plugin validate plugins/jira --strict
 
+      # Codex has no `plugin validate`; `plugin add` is the closest check. It parses both
+      # manifests and resolves the marketplace source path, failing non-zero on invalid
+      # JSON or a missing plugin directory. Pinned for the same reason as the Claude CLI.
+      - name: Validate Codex marketplace
+        run: |
+          npx --yes @openai/codex@0.160.1 plugin marketplace add .
+          npx --yes @openai/codex@0.160.1 plugin add jira@atlassian-beta-marketplace
+
   test:
     name: Tests
     runs-on: ubuntu-latest

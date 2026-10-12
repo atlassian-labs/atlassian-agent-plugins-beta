@@ -2,24 +2,23 @@
 
 > Where plugin content goes, and the rules each directory carries
 
-A plugin's directory structure is fixed by Claude Code. Do not invent sibling directories
-for plugin surface — content the harness does not look for is never loaded.
+A plugin's directory structure is fixed by the hosts. Do not invent sibling directories for
+plugin surface — content the harness does not look for is never loaded. `plugins/jira/` is
+written wholesale by each release; this is the layout that lands there.
 
 ```
 plugins/jira/
   .claude-plugin/plugin.json   # manifest and version
-  README.md                    # what a beta user reads
-  LICENSE.txt
-  package.json                 # supports tests only; the plugin needs no install step
-  scripts/run-tests.mjs        # discovers and runs every *.test.mjs
+  .codex-plugin/plugin.json    # the same manifest, read by Codex
+  bin/                         # the plugin's bundled CLI
   skills/                      # the skills
   agents/                      # subagent definitions
   hooks/                       # hook config and scripts
   commands/                    # slash commands, if any
 ```
 
-`skills/`, `agents/` and `hooks/` currently hold only a `.gitkeep`. Delete it when real
-content lands.
+`skills/`, `agents/` and `hooks/` hold only a `.gitkeep` until the first release replaces
+them.
 
 Note that `--strict` validation reads **every** `.md` file in `agents/` as an agent
 definition and every `.md` in `commands/` as a command. A README in either directory fails

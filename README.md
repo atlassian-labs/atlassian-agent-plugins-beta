@@ -27,10 +27,9 @@ without holding the stable channel to pre-release quality.
 | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `jira` | Scaffold | Beta channel for the Atlassian agent plugin — Jira work item workflows, run locally in your terminal against your own Atlassian sites. |
 
-`jira` is installable today but ships no capabilities yet: the repository
-foundations landed first, and the skill content follows. See
-[`plugins/jira/README.md`](plugins/jira/README.md) for what is
-present.
+`jira` is installable today but ships no capabilities yet: the repository foundations landed
+first, and the built plugin follows with the first release. `plugins/jira/` is written wholesale
+by each release, so what it holds is exactly what the installed plugin runs.
 
 ## Usage
 
@@ -47,25 +46,38 @@ granted: it acts as you, through your own credentials.
 
 > [!NOTE]
 > The example above describes the capability this channel is being built to ship. The
-> plugin currently in `plugins/jira` is a scaffold and does not yet do this.
-> Track [the plugin README](plugins/jira/README.md) for what actually works in
-> the release you have installed.
+> plugin currently in `plugins/jira` is a scaffold and does not yet do this. Check the
+> version in `claude plugin list` or `codex plugin list` for the release you have installed.
 
 ## Installation
 
-Requires [Claude Code](https://code.claude.com/docs) and Node.js 20.6 or later.
+Requires [Claude Code](https://code.claude.com/docs) or [Codex](https://developers.openai.com/codex),
+Node.js 20.6 or later, and the Atlassian Teamwork Graph CLI (`twg`), which the plugin drives
+but does not bundle. Install `twg` from
+<https://developer.atlassian.com/cloud/twg-cli/getting-started/installation/> and sign in with
+`twg login` before your first task.
 
-Add this repository as a plugin marketplace, then install the plugin:
+Add this repository as a plugin marketplace, then install the plugin.
+
+Claude Code:
 
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
 claude plugin install jira@atlassian-beta-marketplace
 ```
 
-Start a new Claude Code session afterwards so the plugin loads. To confirm it is active:
+Codex:
+
+```bash
+codex plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
+codex plugin add jira@atlassian-beta-marketplace
+```
+
+Start a new session afterwards so the plugin loads. To confirm it is active:
 
 ```bash
 claude plugin list
+codex plugin list
 ```
 
 Full instructions — including updating, pinning behaviour, uninstalling, and installing
@@ -95,7 +107,7 @@ From the repository root:
 npm install          # prettier, lint-staged, git hooks
 npm run format:check # markdown, JSON, and script formatting
 npm run validate     # validate the marketplace and every plugin, --strict
-npm test             # plugin hook and skill-script unit tests
+npm test             # repository invariants: manifests, governance files, no internal references
 ```
 
 CI runs the same commands on every pull request — see

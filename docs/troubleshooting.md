@@ -42,7 +42,7 @@ Check what the release you have actually ships:
 claude plugin list        # note the version
 ```
 
-Compare against [`plugins/jira/README.md`](../plugins/jira/README.md).
+Compare against the version in `plugins/jira/.claude-plugin/plugin.json` on `main`.
 The current release in this channel is a **scaffold**: it installs and validates cleanly but
 ships no skills yet, so an installed-and-enabled plugin doing nothing is expected rather
 than broken.
