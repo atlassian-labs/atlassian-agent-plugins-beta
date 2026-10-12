@@ -20,7 +20,7 @@ Everything happens in the open, on GitHub:
 Include:
 
 1. **Plugin version** — from `claude plugin list`.
-2. **Claude Code version** — from `claude --version`.
+2. **Claude Code or Codex version** — from `claude --version` or `codex --version`.
 3. **What you asked for** — the prompt or command, redacted as needed.
 4. **What happened, and what you expected.**
 5. **Whether anything was written to Jira** — so we know if there is cleanup to do.

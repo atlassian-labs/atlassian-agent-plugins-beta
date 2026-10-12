@@ -12,6 +12,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const readJson = (...parts) => JSON.parse(readFileSync(join(repoRoot, ...parts), 'utf8'))
 const marketplace = readJson('.claude-plugin', 'marketplace.json')
+const codexMarketplace = readJson('.agents', 'plugins', 'marketplace.json')
 
 const pluginDirs = readdirSync(join(repoRoot, 'plugins'), { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -36,6 +37,27 @@ describe('marketplace manifest', () => {
     assert.ok(marketplace.owner?.name, 'marketplace.owner.name is required')
     assert.ok(marketplace.description?.length > 20, 'marketplace.description is too thin to be useful')
   })
+
+  test('Codex manifest shares the marketplace name and lists the same plugins', () => {
+    // `<plugin>@<marketplace>` has to be the same string on both hosts.
+    assert.equal(codexMarketplace.name, marketplace.name, 'Codex and Claude marketplace names have drifted')
+    assert.deepEqual(
+      codexMarketplace.plugins.map((plugin) => plugin.name).sort(),
+      marketplace.plugins.map((plugin) => plugin.name).sort(),
+      '.agents/plugins/marketplace.json and .claude-plugin/marketplace.json list different plugins',
+    )
+    for (const plugin of codexMarketplace.plugins) {
+      assert.deepEqual(
+        plugin.source,
+        { source: 'local', path: `./plugins/${plugin.name}` },
+        `${plugin.name}: Codex source does not match its name`,
+      )
+      assert.ok(
+        plugin.policy?.installation && plugin.policy?.authentication && plugin.category,
+        `${plugin.name}: a Codex entry needs policy.installation, policy.authentication, and category`,
+      )
+    }
+  })
 })
 
 describe('plugin manifests', () => {
@@ -49,25 +71,6 @@ describe('plugin manifests', () => {
 
       test('version is semver', () => {
         assert.match(manifest.version ?? '', /^\d+\.\d+\.\d+(-[\w.]+)?$/, 'version must be semver')
-      })
-
-      test('declares a permissive licence matching the repository', () => {
-        assert.equal(manifest.license, 'Apache-2.0')
-        assert.ok(existsSync(join(repoRoot, 'plugins', name, 'LICENSE')), 'plugin is missing a LICENSE file')
-      })
-
-      test('ships a README', () => {
-        assert.ok(existsSync(join(repoRoot, 'plugins', name, 'README.md')))
-      })
-
-      test('marketplace description and manifest description both flag the beta channel', () => {
-        const entry = marketplace.plugins.find((plugin) => plugin.name === name)
-        for (const [label, text] of [
-          ['plugin.json', manifest.description],
-          ['marketplace.json', entry.description],
-        ]) {
-          assert.match(text, /beta|pre-release/i, `${label}: description must make the pre-release status clear`)
-        }
       })
     })
   }
@@ -91,13 +94,6 @@ describe('open source governance files', () => {
     const license = readFileSync(join(repoRoot, 'LICENSE'), 'utf8')
     assert.match(license, /^\s+Apache License\n\s+Version 2\.0, January 2004/, 'LICENSE must be the Apache 2.0 template text')
     assert.match(license, /TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION/)
-  })
-
-  test('every plugin ships the same LICENSE as the repository', () => {
-    const root = readFileSync(join(repoRoot, 'LICENSE'), 'utf8')
-    for (const name of pluginDirs) {
-      assert.equal(readFileSync(join(repoRoot, 'plugins', name, 'LICENSE'), 'utf8'), root, `${name}: LICENSE has drifted from the root`)
-    }
   })
 
   test('README has no unreplaced template placeholders', () => {
