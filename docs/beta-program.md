@@ -40,7 +40,7 @@ running. Quote it in any issue you file.
 Nothing in this channel is contractually stable. That said, some things break users harder
 than others, and we treat them with more care:
 
-- **Skill and command names** (`/atlassian-beta:<skill>`) are what you type. Renaming one
+- **Skill and command names** (`/jira:<skill>`) are what you type. Renaming one
   is a breaking change and gets called out in the release.
 - **Anything that writes to Jira** gets more caution than anything that reads. A change
   that widens what the agent will write without asking is treated as breaking.

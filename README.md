@@ -23,13 +23,13 @@ without holding the stable channel to pre-release quality.
 
 ## Plugins
 
-| Plugin           | Status   | What it does                                                                                                                           |
-| ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `atlassian-beta` | Scaffold | Beta channel for the Atlassian agent plugin — Jira work item workflows, run locally in your terminal against your own Atlassian sites. |
+| Plugin | Status   | What it does                                                                                                                           |
+| ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `jira` | Scaffold | Beta channel for the Atlassian agent plugin — Jira work item workflows, run locally in your terminal against your own Atlassian sites. |
 
-`atlassian-beta` is installable today but ships no capabilities yet: the repository
+`jira` is installable today but ships no capabilities yet: the repository
 foundations landed first, and the skill content follows. See
-[`plugins/atlassian-beta/README.md`](plugins/atlassian-beta/README.md) for what is
+[`plugins/jira/README.md`](plugins/jira/README.md) for what is
 present.
 
 ## Usage
@@ -47,8 +47,8 @@ granted: it acts as you, through your own credentials.
 
 > [!NOTE]
 > The example above describes the capability this channel is being built to ship. The
-> plugin currently in `plugins/atlassian-beta` is a scaffold and does not yet do this.
-> Track [the plugin README](plugins/atlassian-beta/README.md) for what actually works in
+> plugin currently in `plugins/jira` is a scaffold and does not yet do this.
+> Track [the plugin README](plugins/jira/README.md) for what actually works in
 > the release you have installed.
 
 ## Installation
@@ -59,7 +59,7 @@ Add this repository as a plugin marketplace, then install the plugin:
 
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 Start a new Claude Code session afterwards so the plugin loads. To confirm it is active:

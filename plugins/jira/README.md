@@ -14,7 +14,7 @@ own terminal, against the Atlassian sites you are already authorised for.
 
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 Start a new Claude Code session afterwards so the plugin loads.

@@ -10,12 +10,12 @@ claude plugin list
 
 1. **You did not restart.** Plugins load at session start. Exit Claude Code and start a new
    session.
-2. **It is installed but disabled.** `claude plugin enable atlassian-beta`.
+2. **It is installed but disabled.** `claude plugin enable jira`.
 3. **The install did not actually succeed.** Re-run the install and read the output rather
    than assuming:
 
    ```bash
-   claude plugin install atlassian-beta@atlassian-beta-marketplace
+   claude plugin install jira@atlassian-beta-marketplace
    ```
 
 ## `claude plugin marketplace add` fails
@@ -42,7 +42,7 @@ Check what the release you have actually ships:
 claude plugin list        # note the version
 ```
 
-Compare against [`plugins/atlassian-beta/README.md`](../plugins/atlassian-beta/README.md).
+Compare against [`plugins/jira/README.md`](../plugins/jira/README.md).
 The current release in this channel is a **scaffold**: it installs and validates cleanly but
 ships no skills yet, so an installed-and-enabled plugin doing nothing is expected rather
 than broken.
@@ -76,7 +76,7 @@ This is the most valuable thing you can report, and it does not look like a cras
 ## Rule the plugin out entirely
 
 ```bash
-claude plugin disable atlassian-beta
+claude plugin disable jira
 ```
 
 Restart, and reproduce. If the problem persists with the plugin disabled, it is not this

@@ -50,7 +50,7 @@ Then install from a local checkout and exercise the change for real:
 
 ```bash
 claude plugin marketplace add ./
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 `--strict` validation passing is necessary, not sufficient. It checks manifests, not

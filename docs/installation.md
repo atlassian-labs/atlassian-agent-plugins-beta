@@ -25,7 +25,7 @@ next update.
 
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 Start a new Claude Code session afterwards — plugins load at session start.
@@ -41,11 +41,11 @@ claude plugin marketplace list     # is the marketplace registered?
 
 ```bash
 claude plugin marketplace update atlassian-beta-marketplace
-claude plugin update atlassian-beta
+claude plugin update jira
 ```
 
 Then restart your session. Check the version in `claude plugin list` against
-`plugins/atlassian-beta/.claude-plugin/plugin.json` to confirm the update took.
+`plugins/jira/.claude-plugin/plugin.json` to confirm the update took.
 
 > [!IMPORTANT]
 > There is no pinning. Beta plugins are expected to change under you, sometimes in
@@ -57,14 +57,14 @@ Then restart your session. Check the version in `claude plugin list` against
 Useful when you want to rule the plugin out while debugging something else:
 
 ```bash
-claude plugin disable atlassian-beta
-claude plugin enable atlassian-beta
+claude plugin disable jira
+claude plugin enable jira
 ```
 
 ## Uninstall
 
 ```bash
-claude plugin uninstall atlassian-beta
+claude plugin uninstall jira
 claude plugin marketplace remove atlassian-beta-marketplace
 ```
 
@@ -81,7 +81,7 @@ cd atlassian-agent-plugins-beta
 git checkout <commit-or-branch>          # optional: pin to a known-good point
 
 claude plugin marketplace add ./
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 A local marketplace and the remote one share the marketplace name, so remove one before
