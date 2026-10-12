@@ -8,9 +8,9 @@
   },
   "plugins": [
     {
-      "name": "atlassian-beta",
+      "name": "jira",
       "displayName": "Atlassian (Beta)",
-      "source": "./plugins/atlassian-beta",
+      "source": "./plugins/jira",
       "description": "Beta channel for the Atlassian agent plugin. Drive Jira from your terminal: read and search work items, triage duplicates, create and update, transition and comment, and execute the work an item describes. Pre-release — behaviour can change between releases.",
       "author": {
         "name": "Atlassian",

@@ -31,7 +31,7 @@ const tests = findTests(pluginRoot)
   .sort()
 
 if (tests.length === 0) {
-  console.log('No *.test.mjs files found under plugins/atlassian-beta — nothing to run.')
+  console.log('No *.test.mjs files found under plugins/jira — nothing to run.')
   process.exit(0)
 }
 

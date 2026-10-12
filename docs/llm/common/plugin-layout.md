@@ -6,7 +6,7 @@ A plugin's directory structure is fixed by Claude Code. Do not invent sibling di
 for plugin surface — content the harness does not look for is never loaded.
 
 ```
-plugins/atlassian-beta/
+plugins/jira/
   .claude-plugin/plugin.json   # manifest and version
   README.md                    # what a beta user reads
   LICENSE.txt
@@ -28,7 +28,7 @@ validation for missing frontmatter — which is why this guidance lives here ins
 ## skills/
 
 One directory per skill, kebab-case, containing a `SKILL.md` whose frontmatter `name`
-matches the directory name. That name is what users type as `/atlassian-beta:<skill>`, so
+matches the directory name. That name is what users type as `/jira:<skill>`, so
 it is a public interface — renaming it is a breaking change.
 
 ```
@@ -45,7 +45,7 @@ link. Unreachable content is dead weight that still costs review.
 ## agents/
 
 One markdown file per agent, kebab-case, named for the agent it defines:
-`agents/work-item-code-review.md` becomes `atlassian-beta:work-item-code-review`.
+`agents/work-item-code-review.md` becomes `jira:work-item-code-review`.
 
 Frontmatter (`name`, `description`, `model`, `color`, `tools`) is Claude Code's subagent
 schema, and `tools` values are Claude Code tool names — this plugin targets Claude Code.

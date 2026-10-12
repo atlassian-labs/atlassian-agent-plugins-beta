@@ -1,6 +1,6 @@
 # Getting started
 
-This guide takes you from nothing to a working install of the `atlassian-beta` plugin.
+This guide takes you from nothing to a working install of the `jira` plugin.
 
 > [!WARNING]
 > This is a beta release channel. See [beta-program.md](beta-program.md) for what that
@@ -28,7 +28,7 @@ claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-
 ## 3. Install the plugin
 
 ```bash
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 The `@atlassian-beta-marketplace` suffix names the marketplace to install from. It is
@@ -42,7 +42,7 @@ Plugins load at session start, so **start a new Claude Code session**. Then:
 claude plugin list
 ```
 
-`atlassian-beta` should appear as installed and enabled, with its version. If it does not,
+`jira` should appear as installed and enabled, with its version. If it does not,
 see [troubleshooting.md](troubleshooting.md).
 
 ## 5. Complete plugin setup
@@ -54,7 +54,7 @@ see [troubleshooting.md](troubleshooting.md).
 
 The plugin drives an Atlassian CLI that it does not itself bundle. Setup and sign-in
 instructions ship with the skill content — see
-[`plugins/atlassian-beta/README.md`](../plugins/atlassian-beta/README.md) for the state of
+[`plugins/jira/README.md`](../plugins/jira/README.md) for the state of
 the release you have installed.
 
 ## 6. Run your first task

@@ -14,7 +14,7 @@ bug.
 
 ```
 .claude-plugin/marketplace.json   # what beta users can install — the release gate
-plugins/atlassian-beta/           # the plugin: manifest, README, skills, agents, hooks
+plugins/jira/           # the plugin: manifest, README, skills, agents, hooks
 docs/                             # consumer-facing documentation
 docs/llm/                         # guidance for coding agents working in this repo
 .github/workflows/validate.yml    # CI
@@ -59,7 +59,7 @@ Manifest validation passing is not evidence the change works:
 
 ```bash
 claude plugin marketplace add ./
-claude plugin install atlassian-beta@atlassian-beta-marketplace
+claude plugin install jira@atlassian-beta-marketplace
 ```
 
 Start a new session and actually drive the behaviour you changed. Remove the local
@@ -74,7 +74,7 @@ claude plugin marketplace remove atlassian-beta-marketplace
 Merging to `main` publishes. There is no staging environment between your pull request and
 a beta user's next update.
 
-Bump `version` in `plugins/atlassian-beta/.claude-plugin/plugin.json` for any user-visible
+Bump `version` in `plugins/jira/.claude-plugin/plugin.json` for any user-visible
 change — skill behaviour, command names, output shape, hook behaviour, README guidance. Do
 not bump for CI, repo docs, or formatting. Beta users have no lockfile, so the version is
 the only way they can tell what they are running.

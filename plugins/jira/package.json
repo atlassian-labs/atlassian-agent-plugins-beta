@@ -1,5 +1,5 @@
 {
-  "name": "atlassian-beta-plugin",
+  "name": "jira-plugin",
   "version": "0.0.1",
   "private": true,
   "description": "Beta channel Claude Code plugin for Atlassian Jira workflows. Node dependencies here support the hooks/ and skills/*/scripts/ tests only; the plugin itself needs no install step.",

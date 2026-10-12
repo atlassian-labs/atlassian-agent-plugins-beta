@@ -8,7 +8,7 @@ Report them to Atlassian through the official channel:
 <https://www.atlassian.com/trust/security/report-a-security-vulnerability>
 
 Include enough detail to reproduce the issue: the plugin version
-(`plugins/atlassian-beta/.claude-plugin/plugin.json`), the Claude Code version, the
+(`plugins/jira/.claude-plugin/plugin.json`), the Claude Code version, the
 prompt or command that triggers it, and what you observed.
 
 ## Scope
