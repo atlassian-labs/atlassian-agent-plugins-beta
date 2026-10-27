@@ -1,15 +1,23 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "jira",
-  "displayName": "Atlassian (Beta)",
-  "version": "0.0.1",
-  "description": "Beta channel for the Atlassian agent plugin. Drive Jira from your terminal: read and search work items, triage duplicates, create and update, transition and comment, and execute the work an item describes. Pre-release software — behaviour, commands and output can change between releases.",
+  "displayName": "Atlassian Jira Workflows",
+  "version": "0.17.0",
+  "description": "Drive Jira from Claude Code: read, search by JQL, triage duplicates, create and update work items, transition and comment, claim an item to assign it to yourself and start it, and publish the changes for an item with a pull request and a writeback comment. Try \"let's work on JLAD-8\", \"publish the changes for JLAD-8\", or \"find duplicates of this bug\".",
   "author": {
-    "name": "Atlassian",
-    "url": "https://www.atlassian.com"
+    "name": "Atlassian"
   },
-  "homepage": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
-  "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
-  "license": "Apache-2.0",
-  "keywords": ["atlassian", "beta", "jira", "work item", "jql", "workflow", "triage", "duplicates", "teamwork graph"]
+  "repository": "https://bitbucket.org/atlassian/atlassian-agent-plugins",
+  "keywords": [
+    "atlassian",
+    "jira",
+    "twg",
+    "teamwork graph",
+    "work item",
+    "jql",
+    "workflow",
+    "triage",
+    "duplicates",
+    "dogfooding"
+  ]
 }
