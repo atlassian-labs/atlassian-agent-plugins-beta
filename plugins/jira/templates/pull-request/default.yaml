@@ -1,0 +1,27 @@
+schema: 1
+kind: pull-request
+description: Item summary, the Jira link, what changed and why, how to test, and the commit list.
+required: [summary, test-plan]
+fields:
+  - name: summary
+    format: prose
+    length: { unit: sentences, min: 1, max: 4 }
+    guidance: What changed and why, in a few sentences, in the item's own terms. Not a list of files, not a restatement of the commits.
+  - name: test-plan
+    format: bullets
+    length: { unit: items, min: 1, max: 6 }
+    guidance: How to check the change, one bullet per check, each a step a reviewer can run or look at.
+body: |
+  {{item.summary}}
+
+  Jira: {{item.url}}
+
+  {{field.summary}}
+
+  ## How to test
+
+  {{field.test-plan}}
+
+  ## Commits
+
+  {{commits}}
