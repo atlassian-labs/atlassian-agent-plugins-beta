@@ -2,14 +2,13 @@ name: Validate
 
 # Security posture for a public repository (Atlassian OSS / Credo requirement):
 #
-#   * `pull_request` — NOT `pull_request_target`. A fork PR runs against the merge ref with
-#     a read-only GITHUB_TOKEN and no access to repository secrets, so a malicious PR
-#     cannot exfiltrate anything from this workflow.
+#   * `pull_request` — NOT `pull_request_target`. PR code is executed by npm and the
+#     validators, so both jobs skip forks. Same-repository PRs receive a read-only token.
 #   * The release job uses only the GitHub-provided token, with write permission confined
 #     to that job and to pushes on main. Do not add repository secrets to this workflow.
-#   * Untrusted PRs must not autobuild. GitHub's repository setting
-#     Settings → Actions → General → "Require approval for all external contributors"
-#     must be enabled — a workflow file cannot enforce that on its own.
+#   * A fork can change this workflow in its PR. Before making the repository public,
+#     enable Settings → Actions → General → "Require approval for all external contributors".
+#     For private forks, do not send secrets or write tokens, and require approval.
 #
 # See https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
 
@@ -30,6 +29,7 @@ concurrency:
 jobs:
   validate:
     name: Validate plugins and formatting
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +65,7 @@ jobs:
 
   test:
     name: Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +88,7 @@ jobs:
     # The upstream release PR supplies the plugin version. Publish that exact version
     # instead of calculating a second one from this repository's commit messages.
     name: Publish plugin release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [validate, test]
     runs-on: ubuntu-latest
     permissions:
@@ -106,9 +107,13 @@ jobs:
         id: version
         run: node scripts/release-version.mjs
 
-      - name: Create GitHub prerelease
-        if: steps.version.outputs.status == 'new'
+      - name: Create GitHub prerelease if missing
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --generate-notes --prerelease
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already has a GitHub release"
+          else
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --generate-notes --prerelease
+          fi

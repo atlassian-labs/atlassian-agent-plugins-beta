@@ -89,7 +89,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const { appendFileSync } = await import('node:fs')
       appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=jira@${version}\nstatus=${status}\n`)
     }
-    console.log(`jira@${version}: ${status === 'new' ? 'ready to release' : 'already released'}`)
+    console.log(`jira@${version}: ${status === 'new' ? 'tag missing' : 'tag exists'}`)
   } catch (error) {
     console.error(error.message)
     process.exitCode = 1
