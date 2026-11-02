@@ -78,8 +78,15 @@ a beta user's next update.
 `plugins/jira/` is written by Atlassian's release tooling, which deletes and
 recreates the directory on every release, version included. Do not edit it by hand: the next
 release overwrites it, and nothing kept inside it survives. Beta users have no lockfile, so
-the version in `plugins/jira/.claude-plugin/plugin.json` is the only way they can
-tell what they are running.
+the version in the Claude and Codex plugin manifests is the way they can tell what they are
+running. Both manifests must carry the same semantic version. The root `package.json`
+version belongs to development tooling and is not the plugin version.
+
+On a push to `main`, CI runs validation and tests, then checks the plugin version against
+existing `jira@<version>` tags. A new version creates a GitHub prerelease and tag at that
+commit; an unchanged version does nothing, and a downgrade fails. The first run creates
+the release for the version already present on `main`. This publishes release metadata;
+merging the release PR remains what makes the plugin available to marketplace users.
 
 Full detail: [`docs/llm/common/release-channel.md`](llm/common/release-channel.md).
 

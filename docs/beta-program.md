@@ -23,7 +23,8 @@ repository.
 
 Plugins follow [semantic versioning](https://semver.org/), currently below `1.0.0` as
 Labs-stage software. The version lives in
-`plugins/<plugin>/.claude-plugin/plugin.json` and is visible in `claude plugin list`.
+the Claude and Codex plugin manifests and is visible in the host's plugin list. Each
+published version also has a `jira@<version>` Git tag and GitHub prerelease.
 
 While the major version is `0`:
 
