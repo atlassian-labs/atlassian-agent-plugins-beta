@@ -41,7 +41,11 @@ npm run validate       # claude plugin validate, --strict, marketplace + every p
 npm test               # repository invariants: manifests, governance files, no internal references
 ```
 
-CI runs the same three on every pull request.
+CI runs the same three on pull requests from branches in this repository. Fork pull requests
+skip jobs that execute checked-out code. A fork can propose changes to the workflow itself,
+so GitHub's **Require approval for all external contributors** setting must be enabled
+before this repository becomes public. For private fork PRs, keep secrets and write tokens
+disabled and require approval in GitHub's fork workflow settings.
 
 `--strict` validation checks manifests and frontmatter. It does **not** check whether the
 agent does the right thing, so it is necessary and nowhere near sufficient.
@@ -84,9 +88,12 @@ version belongs to development tooling and is not the plugin version.
 
 On a push to `main`, CI runs validation and tests, then checks the plugin version against
 existing `jira@<version>` tags. A new version creates a GitHub prerelease and tag at that
-commit; an unchanged version does nothing, and a downgrade fails. The first run creates
-the release for the version already present on `main`. This publishes release metadata;
-merging the release PR remains what makes the plugin available to marketplace users.
+commit; an unchanged version does nothing, and a downgrade fails. You can also select
+**Run workflow** on the Validate workflow in GitHub Actions, choose `main`, and run it to
+publish or retry the current version. If its GitHub release already exists, the job does
+nothing. The first run creates the release for the version already present on `main`. This
+publishes release metadata; merging the release PR remains what makes the plugin available
+to marketplace users.
 
 Full detail: [`docs/llm/common/release-channel.md`](llm/common/release-channel.md).
 
