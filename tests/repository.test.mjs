@@ -7,6 +7,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, dirname, relative, resolve } from 'node:path'
 import { describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { parseVersion } from '../scripts/release-version.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -70,7 +71,13 @@ describe('plugin manifests', () => {
       })
 
       test('version is semver', () => {
-        assert.match(manifest.version ?? '', /^\d+\.\d+\.\d+(-[\w.]+)?$/, 'version must be semver')
+        assert.doesNotThrow(() => parseVersion(manifest.version), 'version must be semver')
+      })
+
+      test('Claude and Codex manifests have the same version', () => {
+        const codex = readJson('plugins', name, '.codex-plugin', 'plugin.json')
+        assert.equal(codex.name, manifest.name)
+        assert.equal(codex.version, manifest.version)
       })
     })
   }

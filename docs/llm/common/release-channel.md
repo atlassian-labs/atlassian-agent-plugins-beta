@@ -23,10 +23,11 @@ Consequences:
 ## Versioning
 
 `plugins/<plugin>/.claude-plugin/plugin.json` carries the version, set by the release that
-wrote the directory from the plugin's source manifest; it is not bumped here. Beta users
-have no lockfile and no pinning, so the version is the only way they can tell what they are
-running. Breaking changes are expected in beta — take them, but say so in the PR's
-beta-impact section.
+wrote the directory from the plugin's source manifest; it is not bumped here. The Codex
+manifest must carry the same version. After CI passes on `main`, a new version gets a
+`jira@<version>` Git tag and GitHub prerelease. Beta users have no lockfile and no pinning,
+so the version is the only way they can tell what they are running. Breaking changes are
+expected in beta — take them, but say so in the PR's beta-impact section.
 
 ## Pre-release honesty
 

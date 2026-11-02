@@ -5,9 +5,8 @@ name: Validate
 #   * `pull_request` — NOT `pull_request_target`. A fork PR runs against the merge ref with
 #     a read-only GITHUB_TOKEN and no access to repository secrets, so a malicious PR
 #     cannot exfiltrate anything from this workflow.
-#   * This workflow uses no secrets at all. Do not add one. If a future job genuinely needs
-#     a secret, it must run from a separate `push`-triggered workflow, never from a
-#     fork-reachable trigger.
+#   * The release job uses only the GitHub-provided token, with write permission confined
+#     to that job and to pushes on main. Do not add repository secrets to this workflow.
 #   * Untrusted PRs must not autobuild. GitHub's repository setting
 #     Settings → Actions → General → "Require approval for all external contributors"
 #     must be enabled — a workflow file cannot enforce that on its own.
@@ -26,7 +25,7 @@ permissions:
 
 concurrency:
   group: validate-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -71,6 +70,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -78,3 +78,37 @@ jobs:
 
       - name: Run repository and plugin tests
         run: npm test
+
+      - name: Check release version against main
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: node scripts/release-version.mjs --base origin/main
+
+  release:
+    # The upstream release PR supplies the plugin version. Publish that exact version
+    # instead of calculating a second one from this repository's commit messages.
+    name: Publish plugin release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check plugin release version
+        id: version
+        run: node scripts/release-version.mjs
+
+      - name: Create GitHub prerelease
+        if: steps.version.outputs.status == 'new'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --generate-notes --prerelease

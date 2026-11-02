@@ -14,7 +14,7 @@
 - [ ] No user-visible change
 - [ ] Behaviour change (described above)
 - [ ] Breaking change for existing beta users
-- [ ] Plugin version bumped in `plugins/*/.claude-plugin/plugin.json`
+- [ ] Release tooling bumped the version in both plugin manifests (if plugin content changed)
 
 ## Is the issue low-risk or high-risk? [Risk Categorization]
 
