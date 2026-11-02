@@ -1,0 +1,27 @@
+schema: 1
+kind: comment
+description: Outcome, summary, and the artefact links.
+required: [outcome, summary]
+fields:
+  - name: outcome
+    format: prose
+    length: { unit: sentences, min: 1, max: 2 }
+    guidance: One or two short sentences on the end result.
+  - name: summary
+    format: bullets
+    length: { unit: items, min: 2, max: 6 }
+    guidance: What was done, one sentence per bullet, in the item's own terms. Not a list of files, not a restatement of the criteria.
+body: |
+  ## Outcome
+
+  {{field.outcome}}
+
+  ## Agent summary
+
+  {{field.summary}}
+
+  ## Artefacts
+
+  **Pull request:** {{pullRequest.link}}
+  **Branch:** {{branch.link}}
+  **Commit:** {{commit.link}}

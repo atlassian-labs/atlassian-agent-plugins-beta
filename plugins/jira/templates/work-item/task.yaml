@@ -1,0 +1,47 @@
+schema: 1
+kind: work-item
+description: A task, work with a known shape.
+required: [why, acceptance-criteria]
+fields:
+  - name: why
+    heading: Why
+    format: prose
+    length: { unit: words, max: 250 }
+    guidance: Prose of 250 words or less.
+  - name: where
+    heading: Where
+    format: labelled
+    labels: [Repo]
+    guidance: Labelled lines rather than prose (`Repo:`, `Primary:`, `Secondary:`), naming the repository and then one to three paths or symbols. Split an item that needs more than three.
+  - name: constraints
+    heading: Constraints
+    format: bullets
+    guidance: States the invariants the implementation is barred from breaking.
+  - name: acceptance-criteria
+    heading: Acceptance criteria
+    format: bullets
+    guidance: Each bullet names the behaviour, file, or command output that settles it. A bullet resting on human judgement says so.
+  - name: verification
+    heading: Verification
+    format: bullets
+    guidance: Names the test, lint, and build commands that have to pass, and states whether the tests come before the implementation or after. It names commands rather than intent. It states where a command class does not apply, and where correctness rests on review rather than on a command.
+  - name: out-of-scope
+    heading: Out of scope
+    format: bullets
+    guidance: States the work the implementation is barred from doing.
+  - name: care-needed
+    heading: Care needed
+    format: bullets
+    guidance: 'Names where the implementer stops and confirms rather than deciding: auth, permissions, data migrations, public APIs, payments, deletion, or anything whose blast radius reaches past the repository.'
+  - name: approach
+    heading: Approach
+    format: prose
+    guidance: States how the drafter would do the work, and its own text states that it does not bind the implementer.
+  - name: open-questions
+    heading: Open questions
+    format: bullets
+    guidance: Carries only details that do not block a start. Where a question blocks the approach, the Category is `Investigation` rather than `Task`.
+  - name: references
+    heading: References
+    format: bullets
+    guidance: Names prior pull requests, earlier attempts, decision records, or upstream issues the implementer would otherwise rediscover.
