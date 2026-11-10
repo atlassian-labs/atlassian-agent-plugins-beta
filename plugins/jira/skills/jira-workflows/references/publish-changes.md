@@ -66,7 +66,7 @@ Add a flag only on its trigger:
 | User asked not to comment, chose to publish without the comment after previewing it, or a re-run after `comment.id` was reported | `--no-comment` |
 | The user said in this session that the comment needs no review, for example "post the comment without my review" | `--skip-comment-review`. A request to publish is not that. |
 | The user said in this session that the pull request description needs no review, for example "open the pull request without my review" | `--skip-pull-request-review`. A request to publish is not that, and neither is `--skip-comment-review`. |
-| The user asked to stop being asked to review the comment, or the pull request description, on every publish | Not a flag. Run `changes review-preference comment skip` or `changes review-preference pull-request skip`, then publish. The choice holds across sessions and repositories for that body only; `ask` undoes it. A request to publish is not that. |
+| The user asked to stop being asked to review the comment, or the pull request description, on every publish | Not a flag. Run `changes review-preference comment skip` or `changes review-preference pull-request skip`, then publish. The choice holds across sessions and repositories for that body only; `ask` undoes it. `changes review-preference` with no arguments prints both choices. The pane's "Review before publishing" setting sets both bodies at once. A request to publish is not that. |
 | User asked not to transition | `--no-transition` |
 | The tree's `origin` is already known fresh | `--no-fetch`. Skips the fetch of `origin/<destination branch>`. |
 

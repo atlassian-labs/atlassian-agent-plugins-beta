@@ -4296,9 +4296,14 @@ var repositoryPreferencesCodec = {
     return { fetch: value.fetch };
   }
 };
+function repositoryName(remote) {
+  return [remote.host, remote.workspace, remote.slug].map((part) => encodeURIComponent(part.toLowerCase())).join("/");
+}
 function repositoryPreferencesKey(remote) {
-  const name = [remote.host, remote.workspace, remote.slug].map((part) => encodeURIComponent(part.toLowerCase())).join("/");
-  return defineStorageKey(`jira/repository-preferences/${name}`, repositoryPreferencesCodec);
+  return defineStorageKey(
+    `jira/repository-preferences/${repositoryName(remote)}`,
+    repositoryPreferencesCodec
+  );
 }
 function getRepositoryPreferences(store, remote) {
   return store.get(repositoryPreferencesKey(remote));
@@ -4685,6 +4690,29 @@ function checkValue(value, what) {
     throw new TypeError(`${what} spans two lines; an action is one cell`);
   }
   return text6;
+}
+var AGE_UNITS = [
+  ["w", 6048e5],
+  ["d", 864e5],
+  ["h", 36e5],
+  ["m", 6e4]
+];
+function formatAge(timestamp2, now) {
+  const text6 = sanitize(timestamp2);
+  if (text6 === "") {
+    return void 0;
+  }
+  const at2 = new Date(text6).getTime();
+  if (Number.isNaN(at2)) {
+    return void 0;
+  }
+  const span = Math.max(0, now.getTime() - at2);
+  for (const [unit, length] of AGE_UNITS) {
+    if (span >= length) {
+      return `${Math.floor(span / length)}${unit}`;
+    }
+  }
+  return "0m";
 }
 
 // ../../plugins/jira/src/panels/action.ts
@@ -5086,6 +5114,699 @@ function markdownizeWorkItem(item) {
   return result;
 }
 
+// ../../plugins/jira/src/storage/codec-utils.ts
+var INVALID = Symbol("invalid");
+function stringProperty(value, key) {
+  const property = value[key];
+  return typeof property === "string" && property.length > 0 ? property : void 0;
+}
+function nullableStringProperty(value, key) {
+  const property = value[key];
+  if (property === void 0) {
+    return void 0;
+  }
+  if (property === null) {
+    return null;
+  }
+  return typeof property === "string" && property.length > 0 ? property : INVALID;
+}
+function numberProperty(value, key) {
+  const property = value[key];
+  return typeof property === "number" && Number.isFinite(property) ? property : void 0;
+}
+function decodeArray(values, decodeItem2) {
+  const decoded = values.flatMap((item) => {
+    const result = decodeItem2(item);
+    return result === void 0 ? [] : [result];
+  });
+  return decoded.length === values.length ? decoded : void 0;
+}
+
+// ../../plugins/jira/src/storage/work-item.ts
+var WORK_ITEM_FIELDS = [
+  "cloudId",
+  "key",
+  "summary",
+  "status",
+  "issuetype",
+  "priority",
+  "resolution",
+  "assignee",
+  "reporter",
+  "parent",
+  "labels",
+  "components",
+  "fixVersions",
+  "duedate",
+  "created",
+  "updated",
+  "description",
+  "remoteLinks",
+  "issuelinks",
+  "comment",
+  "comments",
+  "site",
+  "_truncated"
+];
+var PROJECT_CONTEXT_FIELDS = [
+  "cloudId",
+  "projectId",
+  "projectKey",
+  "projectName",
+  "tenantName",
+  "siteUrl",
+  "lastSeenAt"
+];
+var CLOUD_SITE_FIELDS = [
+  "cloudId",
+  "projectId",
+  "projectKey",
+  "tenantName",
+  "siteUrl"
+];
+var jiraProjectContextCodec = {
+  version: 1,
+  encode: encodeJiraProjectContext,
+  decode: decodeJiraProjectContext
+};
+var jiraProjectKeyIndexCodec = {
+  version: 1,
+  encode: encodeJiraProjectKeyIndex,
+  decode: decodeJiraProjectKeyIndex
+};
+var jiraWorkItemCodec = {
+  version: 4,
+  encode: encodeJiraWorkItem,
+  decode: decodeJiraWorkItem,
+  migrations: {
+    // v1 predates `sections`, which v4 removed again; v1 differs from v4 only
+    // in the rich text, so it migrates the way v3 does.
+    1: migrateRichTextToMarkdown,
+    // v2 predates `status.statusCategory`; that field is optional, so only
+    // the rich text differs from v4.
+    2: migrateRichTextToMarkdown,
+    // v3 held the description and comment bodies as ADF, and a parsed `sections`.
+    3: migrateRichTextToMarkdown
+  }
+};
+function migrateRichTextToMarkdown(value) {
+  if (!isJsonObject(value)) {
+    return value;
+  }
+  const migrated = { ...markdownizeWorkItem(value) };
+  delete migrated.sections;
+  return migrated;
+}
+var WORK_ITEM_KEY_PREFIX = CONTENT.workItem.keyPrefix;
+var jiraKeys = {
+  projectContext(cloudId, projectId) {
+    return defineStorageKey(
+      `${CONTENT.project.keyPrefix}${encodeURIComponent(cloudId)}/${encodeURIComponent(projectId)}`,
+      jiraProjectContextCodec
+    );
+  },
+  projectKeyIndex(projectKey) {
+    return defineStorageKey(
+      `${CONTENT.site.keyPrefix}${encodeURIComponent(projectKey)}`,
+      jiraProjectKeyIndexCodec
+    );
+  },
+  /**
+   * Scoped by `cloudId` as well as `issueKey`: a same-keyed item on a
+   * different site must not collide in storage with this one. See
+   * "Cache identity and site" in agent-docs/jira-schemas/README.md.
+   */
+  workItem(cloudId, issueKey) {
+    return defineStorageKey(
+      `${WORK_ITEM_KEY_PREFIX}${encodeURIComponent(cloudId)}/${encodeURIComponent(issueKey)}`,
+      jiraWorkItemCodec
+    );
+  }
+};
+function parseWorkItemKeyName(name) {
+  if (!name.startsWith(WORK_ITEM_KEY_PREFIX)) {
+    return void 0;
+  }
+  const rest = name.slice(WORK_ITEM_KEY_PREFIX.length);
+  const slash = rest.indexOf("/");
+  if (slash === -1) {
+    return void 0;
+  }
+  try {
+    return {
+      cloudId: asCloudId(decodeURIComponent(rest.slice(0, slash))),
+      issueKey: asIssueKey(decodeURIComponent(rest.slice(slash + 1)))
+    };
+  } catch {
+    return void 0;
+  }
+}
+function createJiraMemory(stores) {
+  return {
+    ...stores,
+    getProjectContext: (cloudId, projectId) => stores.plugin.get(jiraKeys.projectContext(cloudId, projectId)),
+    setProjectContext: async (value) => {
+      const contextKey = jiraKeys.projectContext(value.cloudId, value.projectId);
+      const previous = await stores.plugin.get(contextKey);
+      await stores.plugin.set(contextKey, value);
+      if (previous !== void 0 && previous.projectKey !== value.projectKey) {
+        const previousIndexKey = jiraKeys.projectKeyIndex(previous.projectKey);
+        const previousIndex = await stores.plugin.get(previousIndexKey);
+        if (previousIndex !== void 0) {
+          const remainingSites = previousIndex.sites.filter(
+            (site2) => site2.cloudId !== value.cloudId || site2.projectId !== value.projectId
+          );
+          if (remainingSites.length === 0) {
+            await stores.plugin.delete(previousIndexKey);
+          } else {
+            await stores.plugin.set(previousIndexKey, { sites: remainingSites });
+          }
+        }
+      }
+      const indexKey = jiraKeys.projectKeyIndex(value.projectKey);
+      const existing = await stores.plugin.get(indexKey);
+      const site = toCloudSite(value);
+      const sites = [
+        ...(existing?.sites ?? []).filter(
+          (candidate) => candidate.cloudId !== value.cloudId || candidate.projectId !== value.projectId
+        ),
+        site
+      ];
+      await stores.plugin.set(indexKey, { sites });
+    },
+    getCloudSites: (projectKey) => getCloudSites(stores.plugin, projectKey),
+    getCloudSite: async (projectKey) => {
+      const sites = await getCloudSites(stores.plugin, projectKey);
+      return sites.length === 1 ? sites[0] : void 0;
+    },
+    getWorkItem: (scope, cloudId, issueKey) => stores[scope].get(jiraKeys.workItem(cloudId, issueKey)),
+    setWorkItem: (scope, value) => stores[scope].set(jiraKeys.workItem(value.cloudId, value.key), value),
+    patchWorkItem: async (scope, patch) => {
+      const store = stores[scope];
+      const key = jiraKeys.workItem(patch.cloudId, patch.key);
+      const existing = await store.get(key);
+      const value = mergeWorkItem(existing, patch);
+      await store.set(key, value);
+      return value;
+    }
+  };
+}
+async function getCloudSites(store, projectKey) {
+  const index = await store.get(jiraKeys.projectKeyIndex(projectKey));
+  return index?.sites ?? [];
+}
+function mergeWorkItem(existing, patch) {
+  const merged = { ...existing ?? {} };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== void 0) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+function toCloudSite(value) {
+  return {
+    cloudId: value.cloudId,
+    projectId: value.projectId,
+    projectKey: value.projectKey,
+    tenantName: value.tenantName,
+    siteUrl: value.siteUrl
+  };
+}
+function encodeJiraProjectContext(value) {
+  return {
+    cloudId: value.cloudId,
+    projectId: value.projectId,
+    projectKey: value.projectKey,
+    projectName: value.projectName,
+    tenantName: value.tenantName,
+    siteUrl: value.siteUrl,
+    lastSeenAt: value.lastSeenAt
+  };
+}
+function encodeJiraProjectKeyIndex(value) {
+  return { sites: value.sites.map(encodeJiraCloudSite) };
+}
+function encodeJiraCloudSite(value) {
+  return {
+    cloudId: value.cloudId,
+    projectId: value.projectId,
+    projectKey: value.projectKey,
+    tenantName: value.tenantName,
+    siteUrl: value.siteUrl
+  };
+}
+var KNOWN_WORK_ITEM_KEYS = /* @__PURE__ */ new Set([
+  "cloudId",
+  "key",
+  "summary",
+  "status",
+  "issuetype",
+  "priority",
+  "resolution",
+  "assignee",
+  "reporter",
+  "parent",
+  "labels",
+  "components",
+  "fixVersions",
+  "duedate",
+  "created",
+  "updated",
+  "description",
+  "remoteLinks",
+  "issuelinks",
+  "comment",
+  "comments",
+  "site",
+  "_truncated"
+]);
+function encodeJiraWorkItem(value) {
+  const encoded = {
+    cloudId: value.cloudId,
+    key: value.key,
+    summary: value.summary,
+    status: encodeStatus(value.status),
+    issuetype: encodeIssueType(value.issuetype)
+  };
+  if (value.priority !== void 0) {
+    encoded.priority = value.priority === null ? null : encodeNamedEntity(value.priority);
+  }
+  if (value.resolution !== void 0) {
+    encoded.resolution = value.resolution === null ? null : encodeNamedEntity(value.resolution);
+  }
+  if (value.assignee !== void 0) {
+    encoded.assignee = value.assignee === null ? null : encodeJiraUser(value.assignee);
+  }
+  if (value.reporter !== void 0) encoded.reporter = encodeJiraUser(value.reporter);
+  if (value.parent !== void 0) encoded.parent = encodeParent(value.parent);
+  if (value.labels !== void 0) encoded.labels = [...value.labels];
+  if (value.components !== void 0) encoded.components = value.components.map(encodeNamedEntity);
+  if (value.fixVersions !== void 0) {
+    encoded.fixVersions = value.fixVersions.map(encodeNamedEntity);
+  }
+  if (value.duedate !== void 0) encoded.duedate = value.duedate;
+  if (value.created !== void 0) encoded.created = value.created;
+  if (value.updated !== void 0) encoded.updated = value.updated;
+  if (value.description !== void 0) encoded.description = encodeDescription(value.description);
+  if (value.remoteLinks !== void 0) encoded.remoteLinks = [...value.remoteLinks];
+  if (value.issuelinks !== void 0) encoded.issuelinks = [...value.issuelinks];
+  if (value.comment !== void 0) encoded.comment = encodeCommentBlock(value.comment);
+  if (value.comments !== void 0) encoded.comments = value.comments.map(encodeComment);
+  if (value.site !== void 0) encoded.site = value.site;
+  if (value._truncated !== void 0) encoded._truncated = value._truncated;
+  for (const [key, raw] of Object.entries(value)) {
+    if (!KNOWN_WORK_ITEM_KEYS.has(key) && isJsonValue(raw)) {
+      encoded[key] = raw;
+    }
+  }
+  return encoded;
+}
+function encodeNamedEntity(value) {
+  return { name: value.name };
+}
+function encodeIssueType(value) {
+  return {
+    name: value.name,
+    ...value.hierarchyLevel !== void 0 ? { hierarchyLevel: value.hierarchyLevel } : {},
+    ...value.subtask === true ? { subtask: true } : {}
+  };
+}
+function encodeParent(value) {
+  const issuetype = value.issuetype;
+  return {
+    key: value.key,
+    ...value.summary !== void 0 ? { summary: value.summary } : {},
+    ...value.status !== void 0 ? { status: encodeStatus(value.status) } : {},
+    ...issuetype !== void 0 ? {
+      issuetype: {
+        ...issuetype.name !== void 0 ? { name: issuetype.name } : {},
+        ...issuetype.hierarchyLevel !== void 0 ? { hierarchyLevel: issuetype.hierarchyLevel } : {}
+      }
+    } : {}
+  };
+}
+function encodeStatus(value) {
+  return {
+    name: value.name,
+    ...value.statusCategory !== void 0 ? { statusCategory: encodeStatusCategory(value.statusCategory) } : {}
+  };
+}
+function encodeStatusCategory(value) {
+  return { key: value.key, ...value.name !== void 0 ? { name: value.name } : {} };
+}
+function encodeJiraUser(value) {
+  return {
+    displayName: value.displayName,
+    ...value.emailAddress !== void 0 ? { emailAddress: value.emailAddress } : {},
+    ...value.active !== void 0 ? { active: value.active } : {}
+  };
+}
+function encodeDescription(value) {
+  return value;
+}
+function encodeCommentBlock(value) {
+  return {
+    ...value.comments !== void 0 ? { comments: value.comments.map(encodeComment) } : {},
+    ...value.total !== void 0 ? { total: value.total } : {},
+    ...value.maxResults !== void 0 ? { maxResults: value.maxResults } : {},
+    ...value.startAt !== void 0 ? { startAt: value.startAt } : {}
+  };
+}
+function encodeComment(value) {
+  return {
+    ...value.author !== void 0 ? { author: encodeJiraUser(value.author) } : {},
+    ...value.updateAuthor !== void 0 ? { updateAuthor: encodeJiraUser(value.updateAuthor) } : {},
+    ...value.body !== void 0 ? { body: value.body } : {},
+    ...value.created !== void 0 ? { created: value.created } : {},
+    ...value.updated !== void 0 ? { updated: value.updated } : {}
+  };
+}
+function decodeJiraProjectContext(value) {
+  if (!isJsonObject(value)) {
+    return void 0;
+  }
+  const cloudId = stringProperty(value, "cloudId");
+  const projectId = stringProperty(value, "projectId");
+  const projectKey = stringProperty(value, "projectKey");
+  const projectName = stringProperty(value, "projectName");
+  const tenantName = stringProperty(value, "tenantName");
+  const siteUrl = stringProperty(value, "siteUrl");
+  const lastSeenAt = stringProperty(value, "lastSeenAt");
+  if (cloudId === void 0 || projectId === void 0 || projectKey === void 0 || projectName === void 0 || tenantName === void 0 || siteUrl === void 0 || lastSeenAt === void 0) {
+    return void 0;
+  }
+  try {
+    return {
+      cloudId: asCloudId(cloudId),
+      projectId: asProjectId(projectId),
+      projectKey: asProjectKey(projectKey),
+      projectName,
+      tenantName,
+      siteUrl,
+      lastSeenAt
+    };
+  } catch {
+    return void 0;
+  }
+}
+function decodeJiraProjectKeyIndex(value) {
+  if (!isJsonObject(value) || !Array.isArray(value.sites)) {
+    return void 0;
+  }
+  const sites = value.sites.flatMap((site) => {
+    const decoded = decodeJiraCloudSite(site);
+    return decoded === void 0 ? [] : [decoded];
+  });
+  return { sites };
+}
+function decodeJiraCloudSite(value) {
+  if (!isJsonObject(value)) {
+    return void 0;
+  }
+  const cloudId = stringProperty(value, "cloudId");
+  const projectId = stringProperty(value, "projectId");
+  const projectKey = stringProperty(value, "projectKey");
+  const tenantName = stringProperty(value, "tenantName");
+  const siteUrl = stringProperty(value, "siteUrl");
+  if (cloudId === void 0 || projectId === void 0 || projectKey === void 0 || tenantName === void 0 || siteUrl === void 0) {
+    return void 0;
+  }
+  try {
+    return {
+      cloudId: asCloudId(cloudId),
+      projectId: asProjectId(projectId),
+      projectKey: asProjectKey(projectKey),
+      tenantName,
+      siteUrl
+    };
+  } catch {
+    return void 0;
+  }
+}
+function decodeJiraWorkItem(value) {
+  if (!isJsonObject(value)) {
+    return void 0;
+  }
+  const cloudId = stringProperty(value, "cloudId");
+  const key = stringProperty(value, "key");
+  const summary = stringProperty(value, "summary");
+  const status = decodeStatus(value.status);
+  const issuetype = decodeIssueType(value.issuetype);
+  if (cloudId === void 0 || key === void 0 || summary === void 0 || status === void 0 || issuetype === void 0) {
+    return void 0;
+  }
+  const decoded = {};
+  for (const [propertyKey, raw] of Object.entries(value)) {
+    if (!KNOWN_WORK_ITEM_KEYS.has(propertyKey)) {
+      decoded[propertyKey] = raw;
+    }
+  }
+  const priority = decodeNullableNamedEntity(value.priority);
+  const resolution = decodeNullableNamedEntity(value.resolution);
+  const assignee = decodeNullableUser(value.assignee);
+  const reporter = value.reporter !== void 0 ? decodeNamedUser(value.reporter) : void 0;
+  const parent = decodeParent(value.parent);
+  const labels = decodeStringArray(value.labels);
+  const components = decodeNamedEntityArray(value.components);
+  const fixVersions = decodeNamedEntityArray(value.fixVersions);
+  const duedate = value.duedate === null ? null : stringProperty(value, "duedate");
+  const created = stringProperty(value, "created");
+  const updated = stringProperty(value, "updated");
+  const description = decodeDescription(value.description);
+  const remoteLinks = Array.isArray(value.remoteLinks) ? [...value.remoteLinks] : void 0;
+  const issuelinks = Array.isArray(value.issuelinks) ? [...value.issuelinks] : void 0;
+  const comment = decodeCommentBlock(value.comment);
+  const comments = decodeCommentArray(value.comments);
+  const site = value.site === null ? null : stringProperty(value, "site");
+  const _truncated = stringProperty(value, "_truncated");
+  if (value.priority !== void 0 && value.priority !== null && priority === void 0 || value.resolution !== void 0 && value.resolution !== null && resolution === void 0 || value.assignee !== void 0 && value.assignee !== null && assignee === void 0 || value.reporter !== void 0 && reporter === void 0 || value.parent !== void 0 && parent === void 0 || value.labels !== void 0 && labels === void 0 || value.components !== void 0 && components === void 0 || value.fixVersions !== void 0 && fixVersions === void 0 || value.duedate !== void 0 && value.duedate !== null && duedate === void 0 || value.created !== void 0 && created === void 0 || value.updated !== void 0 && updated === void 0 || value.description !== void 0 && value.description !== null && description === void 0 || value.remoteLinks !== void 0 && remoteLinks === void 0 || value.issuelinks !== void 0 && issuelinks === void 0 || value.comment !== void 0 && comment === void 0 || value.comments !== void 0 && comments === void 0 || value.site !== void 0 && value.site !== null && site === void 0 || value._truncated !== void 0 && _truncated === void 0) {
+    return void 0;
+  }
+  try {
+    return {
+      ...decoded,
+      cloudId: asCloudId(cloudId),
+      key: asIssueKey(key),
+      summary,
+      status,
+      issuetype,
+      ...priority !== void 0 ? { priority } : {},
+      ...value.resolution !== void 0 ? { resolution } : {},
+      ...value.assignee !== void 0 ? { assignee } : {},
+      ...reporter !== void 0 ? { reporter } : {},
+      ...parent !== void 0 ? { parent } : {},
+      ...labels !== void 0 ? { labels } : {},
+      ...components !== void 0 ? { components } : {},
+      ...fixVersions !== void 0 ? { fixVersions } : {},
+      ...value.duedate !== void 0 ? { duedate } : {},
+      ...created !== void 0 ? { created } : {},
+      ...updated !== void 0 ? { updated } : {},
+      ...value.description !== void 0 ? { description } : {},
+      ...remoteLinks !== void 0 ? { remoteLinks } : {},
+      ...issuelinks !== void 0 ? { issuelinks } : {},
+      ...comment !== void 0 ? { comment } : {},
+      ...comments !== void 0 ? { comments } : {},
+      ...value.site !== void 0 ? { site } : {},
+      ..._truncated !== void 0 ? { _truncated } : {}
+    };
+  } catch {
+    return void 0;
+  }
+}
+function decodeNamedEntity(value) {
+  if (value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const name = stringProperty(value, "name");
+  return name === void 0 ? void 0 : { name };
+}
+function decodeIssueType(value) {
+  const named = decodeNamedEntity(value);
+  if (named === void 0 || value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const hierarchyLevel = decodeHierarchyLevel(value);
+  if (hierarchyLevel === INVALID) {
+    return void 0;
+  }
+  return {
+    ...named,
+    ...hierarchyLevel !== void 0 ? { hierarchyLevel } : {},
+    ...value.subtask === true ? { subtask: true } : {}
+  };
+}
+function decodeHierarchyLevel(value) {
+  if (value.hierarchyLevel === void 0) {
+    return void 0;
+  }
+  return numberProperty(value, "hierarchyLevel") ?? INVALID;
+}
+function decodeStatus(value) {
+  if (value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const name = stringProperty(value, "name");
+  if (name === void 0) {
+    return void 0;
+  }
+  const statusCategory = decodeStatusCategory(value.statusCategory);
+  if (value.statusCategory !== void 0 && statusCategory === void 0) {
+    return void 0;
+  }
+  return { name, ...statusCategory !== void 0 ? { statusCategory } : {} };
+}
+function decodeStatusCategory(value) {
+  if (value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const key = stringProperty(value, "key");
+  if (key === void 0) {
+    return void 0;
+  }
+  const name = stringProperty(value, "name");
+  return { key, ...name !== void 0 ? { name } : {} };
+}
+function decodeOptionalNamedEntity(value) {
+  return value === void 0 ? void 0 : decodeNamedEntity(value);
+}
+function decodeNullableNamedEntity(value) {
+  if (value === null) {
+    return null;
+  }
+  return decodeOptionalNamedEntity(value);
+}
+function decodeNamedUser(value) {
+  if (value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const displayName = stringProperty(value, "displayName");
+  if (displayName === void 0) {
+    return void 0;
+  }
+  const emailAddress = stringProperty(value, "emailAddress");
+  const active = typeof value.active === "boolean" ? value.active : void 0;
+  return {
+    displayName,
+    ...emailAddress !== void 0 ? { emailAddress } : {},
+    ...active !== void 0 ? { active } : {}
+  };
+}
+function decodeNullableUser(value) {
+  if (value === null) {
+    return null;
+  }
+  if (value === void 0) {
+    return void 0;
+  }
+  return decodeNamedUser(value);
+}
+function decodeParent(value) {
+  if (value === void 0 || !isJsonObject(value)) {
+    return void 0;
+  }
+  const key = stringProperty(value, "key");
+  if (key === void 0) {
+    return void 0;
+  }
+  const summary = stringProperty(value, "summary");
+  const status = decodeStatus(value.status);
+  const issuetype = decodeParentIssueType(value.issuetype);
+  if (issuetype === INVALID) {
+    return void 0;
+  }
+  return {
+    key,
+    ...summary !== void 0 ? { summary } : {},
+    ...status !== void 0 ? { status } : {},
+    ...issuetype !== void 0 ? { issuetype } : {}
+  };
+}
+function decodeParentIssueType(value) {
+  if (value === void 0) {
+    return void 0;
+  }
+  if (!isJsonObject(value)) {
+    return INVALID;
+  }
+  const name = stringProperty(value, "name");
+  const hierarchyLevel = decodeHierarchyLevel(value);
+  if (hierarchyLevel === INVALID) {
+    return INVALID;
+  }
+  return {
+    ...name !== void 0 ? { name } : {},
+    ...hierarchyLevel !== void 0 ? { hierarchyLevel } : {}
+  };
+}
+function decodeStringArray(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : void 0;
+}
+function decodeNamedEntityArray(value) {
+  if (!Array.isArray(value)) {
+    return void 0;
+  }
+  const decoded = value.flatMap((item) => {
+    const entity = decodeNamedEntity(item);
+    return entity === void 0 ? [] : [entity];
+  });
+  return decoded.length === value.length ? decoded : void 0;
+}
+function decodeDescription(value) {
+  return value === void 0 || value === null || typeof value === "string" ? value : void 0;
+}
+function decodeCommentBlock(value) {
+  if (value === void 0) {
+    return void 0;
+  }
+  if (!isJsonObject(value)) {
+    return void 0;
+  }
+  const comments = decodeCommentArray(value.comments);
+  const total = typeof value.total === "number" ? value.total : void 0;
+  const maxResults = typeof value.maxResults === "number" ? value.maxResults : void 0;
+  const startAt = typeof value.startAt === "number" ? value.startAt : void 0;
+  if (value.comments !== void 0 && comments === void 0 || value.total !== void 0 && total === void 0 || value.maxResults !== void 0 && maxResults === void 0 || value.startAt !== void 0 && startAt === void 0) {
+    return void 0;
+  }
+  return {
+    ...comments !== void 0 ? { comments } : {},
+    ...total !== void 0 ? { total } : {},
+    ...maxResults !== void 0 ? { maxResults } : {},
+    ...startAt !== void 0 ? { startAt } : {}
+  };
+}
+function decodeCommentArray(value) {
+  if (!Array.isArray(value)) {
+    return void 0;
+  }
+  const decoded = value.flatMap((item) => {
+    const comment = decodeComment(item);
+    return comment === void 0 ? [] : [comment];
+  });
+  return decoded.length === value.length ? decoded : void 0;
+}
+function decodeComment(value) {
+  if (!isJsonObject(value)) {
+    return void 0;
+  }
+  const author = value.author !== void 0 ? decodeNamedUser(value.author) : void 0;
+  const updateAuthor = value.updateAuthor !== void 0 ? decodeNamedUser(value.updateAuthor) : void 0;
+  const body = typeof value.body === "string" ? value.body : void 0;
+  const created = stringProperty(value, "created");
+  const updated = stringProperty(value, "updated");
+  if (value.author !== void 0 && author === void 0 || value.updateAuthor !== void 0 && updateAuthor === void 0 || value.body !== void 0 && body === void 0 || value.created !== void 0 && created === void 0 || value.updated !== void 0 && updated === void 0) {
+    return void 0;
+  }
+  return {
+    ...author !== void 0 ? { author } : {},
+    ...updateAuthor !== void 0 ? { updateAuthor } : {},
+    ...body !== void 0 ? { body } : {},
+    ...created !== void 0 ? { created } : {},
+    ...updated !== void 0 ? { updated } : {}
+  };
+}
+
 // ../../plugins/jira/src/work-item/ingest.ts
 var NOISE_KEYS = /* @__PURE__ */ new Set([
   "self",
@@ -5162,6 +5883,28 @@ function hoistFields(item) {
   const rest = { ...item };
   delete rest.fields;
   return { ...fields, ...rest };
+}
+var NULL_AS_ABSENT_KEYS = /* @__PURE__ */ new Set([
+  "reporter",
+  "parent",
+  "labels",
+  "components",
+  "fixVersions",
+  "remoteLinks",
+  "issuelinks",
+  "comment"
+]);
+function dropNullAsAbsent(item) {
+  return Object.fromEntries(
+    Object.entries(item).filter(([key, value]) => value !== null || !NULL_AS_ABSENT_KEYS.has(key))
+  );
+}
+function hoistParentFields(item) {
+  const parent = item.parent;
+  if (!isJsonObject(parent) || !isJsonObject(parent.fields)) {
+    return item;
+  }
+  return { ...item, parent: hoistFields(parent) };
 }
 function stripNoiseKeys(value) {
   if (Array.isArray(value)) {
@@ -5243,20 +5986,21 @@ function prepareWorkItemForStorage(cloudId, raw, options = {}) {
   if (unwrapped === void 0) {
     throw new Error("No work item found in the payload");
   }
-  const hoisted = hoistFields(unwrapped);
+  const hoisted = hoistParentFields(hoistFields(unwrapped));
   const stripped = stripNoiseKeys(hoisted);
   if (!isJsonObject(stripped)) {
     throw new Error("No work item found in the payload");
   }
+  const present = dropNullAsAbsent(stripped);
   const maxFieldLength = options.maxFieldLength ?? DEFAULT_MAX_FIELD_LENGTH;
   const { item: truncated, truncatedFields } = truncateForBudget(
-    markdownizeWorkItem(stripped),
+    markdownizeWorkItem(present),
     maxFieldLength
   );
   const key = truncated.key;
   const summary = truncated.summary;
   const status = decodeRequiredStatus(truncated.status);
-  const issuetype = decodeRequiredNamedEntity(truncated.issuetype);
+  const issuetype = decodeRequiredIssueType(truncated.issuetype);
   if (typeof key !== "string" || typeof summary !== "string" || status === void 0 || issuetype === void 0) {
     throw new Error(
       "Work item payload is missing a required field: key, summary, status, or issuetype"
@@ -5269,12 +6013,29 @@ function prepareWorkItemForStorage(cloudId, raw, options = {}) {
     summary,
     status,
     issuetype,
+    ...isJsonObject(truncated.parent) ? { parent: normalizeParentStatus(truncated.parent) } : {},
     ...options.site !== void 0 ? { site: options.site } : {},
     ...truncatedFields.length > 0 ? { _truncated: truncatedFields.join(",") } : {}
   };
 }
-function decodeRequiredNamedEntity(value) {
-  return value !== void 0 && isJsonObject(value) && typeof value.name === "string" ? { name: value.name } : void 0;
+function normalizeParentStatus(parent) {
+  if (parent.status === void 0) {
+    return parent;
+  }
+  const { status: raw, ...rest } = parent;
+  const status = decodeRequiredStatus(raw);
+  return status === void 0 ? rest : { ...rest, status: encodeStatus(status) };
+}
+function decodeRequiredIssueType(value) {
+  if (value === void 0 || !isJsonObject(value) || typeof value.name !== "string") {
+    return void 0;
+  }
+  const level = value.hierarchyLevel;
+  return {
+    name: value.name,
+    ...typeof level === "number" && Number.isFinite(level) ? { hierarchyLevel: level } : {},
+    ...value.subtask === true ? { subtask: true } : {}
+  };
 }
 function decodeRequiredStatus(value) {
   if (value === void 0 || !isJsonObject(value) || typeof value.name !== "string") {
@@ -5288,24 +6049,6 @@ function decodeStatusCategoryForIngest(value) {
     return void 0;
   }
   return { key: value.key, ...typeof value.name === "string" ? { name: value.name } : {} };
-}
-
-// ../../plugins/jira/src/storage/codec-utils.ts
-var INVALID = Symbol("invalid");
-function stringProperty(value, key) {
-  const property = value[key];
-  return typeof property === "string" && property.length > 0 ? property : void 0;
-}
-function numberProperty(value, key) {
-  const property = value[key];
-  return typeof property === "number" && Number.isFinite(property) ? property : void 0;
-}
-function decodeArray(values, decodeItem) {
-  const decoded = values.flatMap((item) => {
-    const result = decodeItem(item);
-    return result === void 0 ? [] : [result];
-  });
-  return decoded.length === values.length ? decoded : void 0;
 }
 
 // ../../plugins/jira/src/storage/link-signal.ts
@@ -5575,605 +6318,6 @@ function releaseMarker(store, name) {
   return store.delete(sessionMarkerKey(name));
 }
 
-// ../../plugins/jira/src/storage/work-item.ts
-var WORK_ITEM_FIELDS = [
-  "cloudId",
-  "key",
-  "summary",
-  "status",
-  "issuetype",
-  "priority",
-  "resolution",
-  "assignee",
-  "reporter",
-  "parent",
-  "labels",
-  "components",
-  "fixVersions",
-  "duedate",
-  "created",
-  "updated",
-  "description",
-  "remoteLinks",
-  "issuelinks",
-  "comment",
-  "comments",
-  "site",
-  "_truncated"
-];
-var PROJECT_CONTEXT_FIELDS = [
-  "cloudId",
-  "projectId",
-  "projectKey",
-  "projectName",
-  "tenantName",
-  "siteUrl",
-  "lastSeenAt"
-];
-var CLOUD_SITE_FIELDS = [
-  "cloudId",
-  "projectId",
-  "projectKey",
-  "tenantName",
-  "siteUrl"
-];
-var jiraProjectContextCodec = {
-  version: 1,
-  encode: encodeJiraProjectContext,
-  decode: decodeJiraProjectContext
-};
-var jiraProjectKeyIndexCodec = {
-  version: 1,
-  encode: encodeJiraProjectKeyIndex,
-  decode: decodeJiraProjectKeyIndex
-};
-var jiraWorkItemCodec = {
-  version: 4,
-  encode: encodeJiraWorkItem,
-  decode: decodeJiraWorkItem,
-  migrations: {
-    // v1 predates `sections`, which v4 removed again; v1 differs from v4 only
-    // in the rich text, so it migrates the way v3 does.
-    1: migrateRichTextToMarkdown,
-    // v2 predates `status.statusCategory`; that field is optional, so only
-    // the rich text differs from v4.
-    2: migrateRichTextToMarkdown,
-    // v3 held the description and comment bodies as ADF, and a parsed `sections`.
-    3: migrateRichTextToMarkdown
-  }
-};
-function migrateRichTextToMarkdown(value) {
-  if (!isJsonObject(value)) {
-    return value;
-  }
-  const migrated = { ...markdownizeWorkItem(value) };
-  delete migrated.sections;
-  return migrated;
-}
-var WORK_ITEM_KEY_PREFIX = CONTENT.workItem.keyPrefix;
-var jiraKeys = {
-  projectContext(cloudId, projectId) {
-    return defineStorageKey(
-      `${CONTENT.project.keyPrefix}${encodeURIComponent(cloudId)}/${encodeURIComponent(projectId)}`,
-      jiraProjectContextCodec
-    );
-  },
-  projectKeyIndex(projectKey) {
-    return defineStorageKey(
-      `${CONTENT.site.keyPrefix}${encodeURIComponent(projectKey)}`,
-      jiraProjectKeyIndexCodec
-    );
-  },
-  /**
-   * Scoped by `cloudId` as well as `issueKey`: a same-keyed item on a
-   * different site must not collide in storage with this one. See
-   * "Cache identity and site" in agent-docs/jira-schemas/README.md.
-   */
-  workItem(cloudId, issueKey) {
-    return defineStorageKey(
-      `${WORK_ITEM_KEY_PREFIX}${encodeURIComponent(cloudId)}/${encodeURIComponent(issueKey)}`,
-      jiraWorkItemCodec
-    );
-  }
-};
-function parseWorkItemKeyName(name) {
-  if (!name.startsWith(WORK_ITEM_KEY_PREFIX)) {
-    return void 0;
-  }
-  const rest = name.slice(WORK_ITEM_KEY_PREFIX.length);
-  const slash = rest.indexOf("/");
-  if (slash === -1) {
-    return void 0;
-  }
-  try {
-    return {
-      cloudId: asCloudId(decodeURIComponent(rest.slice(0, slash))),
-      issueKey: asIssueKey(decodeURIComponent(rest.slice(slash + 1)))
-    };
-  } catch {
-    return void 0;
-  }
-}
-function createJiraMemory(stores) {
-  return {
-    ...stores,
-    getProjectContext: (cloudId, projectId) => stores.plugin.get(jiraKeys.projectContext(cloudId, projectId)),
-    setProjectContext: async (value) => {
-      const contextKey = jiraKeys.projectContext(value.cloudId, value.projectId);
-      const previous = await stores.plugin.get(contextKey);
-      await stores.plugin.set(contextKey, value);
-      if (previous !== void 0 && previous.projectKey !== value.projectKey) {
-        const previousIndexKey = jiraKeys.projectKeyIndex(previous.projectKey);
-        const previousIndex = await stores.plugin.get(previousIndexKey);
-        if (previousIndex !== void 0) {
-          const remainingSites = previousIndex.sites.filter(
-            (site2) => site2.cloudId !== value.cloudId || site2.projectId !== value.projectId
-          );
-          if (remainingSites.length === 0) {
-            await stores.plugin.delete(previousIndexKey);
-          } else {
-            await stores.plugin.set(previousIndexKey, { sites: remainingSites });
-          }
-        }
-      }
-      const indexKey = jiraKeys.projectKeyIndex(value.projectKey);
-      const existing = await stores.plugin.get(indexKey);
-      const site = toCloudSite(value);
-      const sites = [
-        ...(existing?.sites ?? []).filter(
-          (candidate) => candidate.cloudId !== value.cloudId || candidate.projectId !== value.projectId
-        ),
-        site
-      ];
-      await stores.plugin.set(indexKey, { sites });
-    },
-    getCloudSites: (projectKey) => getCloudSites(stores.plugin, projectKey),
-    getCloudSite: async (projectKey) => {
-      const sites = await getCloudSites(stores.plugin, projectKey);
-      return sites.length === 1 ? sites[0] : void 0;
-    },
-    getWorkItem: (scope, cloudId, issueKey) => stores[scope].get(jiraKeys.workItem(cloudId, issueKey)),
-    setWorkItem: (scope, value) => stores[scope].set(jiraKeys.workItem(value.cloudId, value.key), value),
-    patchWorkItem: async (scope, patch) => {
-      const store = stores[scope];
-      const key = jiraKeys.workItem(patch.cloudId, patch.key);
-      const existing = await store.get(key);
-      const value = mergeWorkItem(existing, patch);
-      await store.set(key, value);
-      return value;
-    }
-  };
-}
-async function getCloudSites(store, projectKey) {
-  const index = await store.get(jiraKeys.projectKeyIndex(projectKey));
-  return index?.sites ?? [];
-}
-function mergeWorkItem(existing, patch) {
-  const merged = { ...existing ?? {} };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value !== void 0) {
-      merged[key] = value;
-    }
-  }
-  return merged;
-}
-function toCloudSite(value) {
-  return {
-    cloudId: value.cloudId,
-    projectId: value.projectId,
-    projectKey: value.projectKey,
-    tenantName: value.tenantName,
-    siteUrl: value.siteUrl
-  };
-}
-function encodeJiraProjectContext(value) {
-  return {
-    cloudId: value.cloudId,
-    projectId: value.projectId,
-    projectKey: value.projectKey,
-    projectName: value.projectName,
-    tenantName: value.tenantName,
-    siteUrl: value.siteUrl,
-    lastSeenAt: value.lastSeenAt
-  };
-}
-function encodeJiraProjectKeyIndex(value) {
-  return { sites: value.sites.map(encodeJiraCloudSite) };
-}
-function encodeJiraCloudSite(value) {
-  return {
-    cloudId: value.cloudId,
-    projectId: value.projectId,
-    projectKey: value.projectKey,
-    tenantName: value.tenantName,
-    siteUrl: value.siteUrl
-  };
-}
-var KNOWN_WORK_ITEM_KEYS = /* @__PURE__ */ new Set([
-  "cloudId",
-  "key",
-  "summary",
-  "status",
-  "issuetype",
-  "priority",
-  "resolution",
-  "assignee",
-  "reporter",
-  "parent",
-  "labels",
-  "components",
-  "fixVersions",
-  "duedate",
-  "created",
-  "updated",
-  "description",
-  "remoteLinks",
-  "issuelinks",
-  "comment",
-  "comments",
-  "site",
-  "_truncated"
-]);
-function encodeJiraWorkItem(value) {
-  const encoded = {
-    cloudId: value.cloudId,
-    key: value.key,
-    summary: value.summary,
-    status: encodeStatus(value.status),
-    issuetype: encodeNamedEntity(value.issuetype)
-  };
-  if (value.priority !== void 0) encoded.priority = encodeNamedEntity(value.priority);
-  if (value.resolution !== void 0) {
-    encoded.resolution = value.resolution === null ? null : encodeNamedEntity(value.resolution);
-  }
-  if (value.assignee !== void 0) {
-    encoded.assignee = value.assignee === null ? null : encodeJiraUser(value.assignee);
-  }
-  if (value.reporter !== void 0) encoded.reporter = encodeJiraUser(value.reporter);
-  if (value.parent !== void 0) {
-    encoded.parent = {
-      key: value.parent.key,
-      ...value.parent.summary !== void 0 ? { summary: value.parent.summary } : {}
-    };
-  }
-  if (value.labels !== void 0) encoded.labels = [...value.labels];
-  if (value.components !== void 0) encoded.components = value.components.map(encodeNamedEntity);
-  if (value.fixVersions !== void 0) {
-    encoded.fixVersions = value.fixVersions.map(encodeNamedEntity);
-  }
-  if (value.duedate !== void 0) encoded.duedate = value.duedate;
-  if (value.created !== void 0) encoded.created = value.created;
-  if (value.updated !== void 0) encoded.updated = value.updated;
-  if (value.description !== void 0) encoded.description = encodeDescription(value.description);
-  if (value.remoteLinks !== void 0) encoded.remoteLinks = [...value.remoteLinks];
-  if (value.issuelinks !== void 0) encoded.issuelinks = [...value.issuelinks];
-  if (value.comment !== void 0) encoded.comment = encodeCommentBlock(value.comment);
-  if (value.comments !== void 0) encoded.comments = value.comments.map(encodeComment);
-  if (value.site !== void 0) encoded.site = value.site;
-  if (value._truncated !== void 0) encoded._truncated = value._truncated;
-  for (const [key, raw] of Object.entries(value)) {
-    if (!KNOWN_WORK_ITEM_KEYS.has(key) && isJsonValue(raw)) {
-      encoded[key] = raw;
-    }
-  }
-  return encoded;
-}
-function encodeNamedEntity(value) {
-  return { name: value.name };
-}
-function encodeStatus(value) {
-  return {
-    name: value.name,
-    ...value.statusCategory !== void 0 ? { statusCategory: encodeStatusCategory(value.statusCategory) } : {}
-  };
-}
-function encodeStatusCategory(value) {
-  return { key: value.key, ...value.name !== void 0 ? { name: value.name } : {} };
-}
-function encodeJiraUser(value) {
-  return {
-    displayName: value.displayName,
-    ...value.emailAddress !== void 0 ? { emailAddress: value.emailAddress } : {},
-    ...value.active !== void 0 ? { active: value.active } : {}
-  };
-}
-function encodeDescription(value) {
-  return value;
-}
-function encodeCommentBlock(value) {
-  return {
-    ...value.comments !== void 0 ? { comments: value.comments.map(encodeComment) } : {},
-    ...value.total !== void 0 ? { total: value.total } : {},
-    ...value.maxResults !== void 0 ? { maxResults: value.maxResults } : {},
-    ...value.startAt !== void 0 ? { startAt: value.startAt } : {}
-  };
-}
-function encodeComment(value) {
-  return {
-    ...value.author !== void 0 ? { author: encodeJiraUser(value.author) } : {},
-    ...value.updateAuthor !== void 0 ? { updateAuthor: encodeJiraUser(value.updateAuthor) } : {},
-    ...value.body !== void 0 ? { body: value.body } : {},
-    ...value.created !== void 0 ? { created: value.created } : {},
-    ...value.updated !== void 0 ? { updated: value.updated } : {}
-  };
-}
-function decodeJiraProjectContext(value) {
-  if (!isJsonObject(value)) {
-    return void 0;
-  }
-  const cloudId = stringProperty(value, "cloudId");
-  const projectId = stringProperty(value, "projectId");
-  const projectKey = stringProperty(value, "projectKey");
-  const projectName = stringProperty(value, "projectName");
-  const tenantName = stringProperty(value, "tenantName");
-  const siteUrl = stringProperty(value, "siteUrl");
-  const lastSeenAt = stringProperty(value, "lastSeenAt");
-  if (cloudId === void 0 || projectId === void 0 || projectKey === void 0 || projectName === void 0 || tenantName === void 0 || siteUrl === void 0 || lastSeenAt === void 0) {
-    return void 0;
-  }
-  try {
-    return {
-      cloudId: asCloudId(cloudId),
-      projectId: asProjectId(projectId),
-      projectKey: asProjectKey(projectKey),
-      projectName,
-      tenantName,
-      siteUrl,
-      lastSeenAt
-    };
-  } catch {
-    return void 0;
-  }
-}
-function decodeJiraProjectKeyIndex(value) {
-  if (!isJsonObject(value) || !Array.isArray(value.sites)) {
-    return void 0;
-  }
-  const sites = value.sites.flatMap((site) => {
-    const decoded = decodeJiraCloudSite(site);
-    return decoded === void 0 ? [] : [decoded];
-  });
-  return { sites };
-}
-function decodeJiraCloudSite(value) {
-  if (!isJsonObject(value)) {
-    return void 0;
-  }
-  const cloudId = stringProperty(value, "cloudId");
-  const projectId = stringProperty(value, "projectId");
-  const projectKey = stringProperty(value, "projectKey");
-  const tenantName = stringProperty(value, "tenantName");
-  const siteUrl = stringProperty(value, "siteUrl");
-  if (cloudId === void 0 || projectId === void 0 || projectKey === void 0 || tenantName === void 0 || siteUrl === void 0) {
-    return void 0;
-  }
-  try {
-    return {
-      cloudId: asCloudId(cloudId),
-      projectId: asProjectId(projectId),
-      projectKey: asProjectKey(projectKey),
-      tenantName,
-      siteUrl
-    };
-  } catch {
-    return void 0;
-  }
-}
-function decodeJiraWorkItem(value) {
-  if (!isJsonObject(value)) {
-    return void 0;
-  }
-  const cloudId = stringProperty(value, "cloudId");
-  const key = stringProperty(value, "key");
-  const summary = stringProperty(value, "summary");
-  const status = decodeStatus(value.status);
-  const issuetype = decodeNamedEntity(value.issuetype);
-  if (cloudId === void 0 || key === void 0 || summary === void 0 || status === void 0 || issuetype === void 0) {
-    return void 0;
-  }
-  const decoded = {};
-  for (const [propertyKey, raw] of Object.entries(value)) {
-    if (!KNOWN_WORK_ITEM_KEYS.has(propertyKey)) {
-      decoded[propertyKey] = raw;
-    }
-  }
-  const priority = decodeOptionalNamedEntity(value.priority);
-  const resolution = decodeNullableNamedEntity(value.resolution);
-  const assignee = decodeNullableUser(value.assignee);
-  const reporter = value.reporter !== void 0 ? decodeNamedUser(value.reporter) : void 0;
-  const parent = decodeParent(value.parent);
-  const labels = decodeStringArray(value.labels);
-  const components = decodeNamedEntityArray(value.components);
-  const fixVersions = decodeNamedEntityArray(value.fixVersions);
-  const duedate = value.duedate === null ? null : stringProperty(value, "duedate");
-  const created = stringProperty(value, "created");
-  const updated = stringProperty(value, "updated");
-  const description = decodeDescription(value.description);
-  const remoteLinks = Array.isArray(value.remoteLinks) ? [...value.remoteLinks] : void 0;
-  const issuelinks = Array.isArray(value.issuelinks) ? [...value.issuelinks] : void 0;
-  const comment = decodeCommentBlock(value.comment);
-  const comments = decodeCommentArray(value.comments);
-  const site = value.site === null ? null : stringProperty(value, "site");
-  const _truncated = stringProperty(value, "_truncated");
-  if (value.priority !== void 0 && priority === void 0 || value.resolution !== void 0 && value.resolution !== null && resolution === void 0 || value.assignee !== void 0 && value.assignee !== null && assignee === void 0 || value.reporter !== void 0 && reporter === void 0 || value.parent !== void 0 && parent === void 0 || value.labels !== void 0 && labels === void 0 || value.components !== void 0 && components === void 0 || value.fixVersions !== void 0 && fixVersions === void 0 || value.duedate !== void 0 && value.duedate !== null && duedate === void 0 || value.created !== void 0 && created === void 0 || value.updated !== void 0 && updated === void 0 || value.description !== void 0 && value.description !== null && description === void 0 || value.remoteLinks !== void 0 && remoteLinks === void 0 || value.issuelinks !== void 0 && issuelinks === void 0 || value.comment !== void 0 && comment === void 0 || value.comments !== void 0 && comments === void 0 || value.site !== void 0 && value.site !== null && site === void 0 || value._truncated !== void 0 && _truncated === void 0) {
-    return void 0;
-  }
-  try {
-    return {
-      ...decoded,
-      cloudId: asCloudId(cloudId),
-      key: asIssueKey(key),
-      summary,
-      status,
-      issuetype,
-      ...priority !== void 0 ? { priority } : {},
-      ...value.resolution !== void 0 ? { resolution } : {},
-      ...value.assignee !== void 0 ? { assignee } : {},
-      ...reporter !== void 0 ? { reporter } : {},
-      ...parent !== void 0 ? { parent } : {},
-      ...labels !== void 0 ? { labels } : {},
-      ...components !== void 0 ? { components } : {},
-      ...fixVersions !== void 0 ? { fixVersions } : {},
-      ...value.duedate !== void 0 ? { duedate } : {},
-      ...created !== void 0 ? { created } : {},
-      ...updated !== void 0 ? { updated } : {},
-      ...value.description !== void 0 ? { description } : {},
-      ...remoteLinks !== void 0 ? { remoteLinks } : {},
-      ...issuelinks !== void 0 ? { issuelinks } : {},
-      ...comment !== void 0 ? { comment } : {},
-      ...comments !== void 0 ? { comments } : {},
-      ...value.site !== void 0 ? { site } : {},
-      ..._truncated !== void 0 ? { _truncated } : {}
-    };
-  } catch {
-    return void 0;
-  }
-}
-function decodeNamedEntity(value) {
-  if (value === void 0 || !isJsonObject(value)) {
-    return void 0;
-  }
-  const name = stringProperty(value, "name");
-  return name === void 0 ? void 0 : { name };
-}
-function decodeStatus(value) {
-  if (value === void 0 || !isJsonObject(value)) {
-    return void 0;
-  }
-  const name = stringProperty(value, "name");
-  if (name === void 0) {
-    return void 0;
-  }
-  const statusCategory = decodeStatusCategory(value.statusCategory);
-  if (value.statusCategory !== void 0 && statusCategory === void 0) {
-    return void 0;
-  }
-  return { name, ...statusCategory !== void 0 ? { statusCategory } : {} };
-}
-function decodeStatusCategory(value) {
-  if (value === void 0 || !isJsonObject(value)) {
-    return void 0;
-  }
-  const key = stringProperty(value, "key");
-  if (key === void 0) {
-    return void 0;
-  }
-  const name = stringProperty(value, "name");
-  return { key, ...name !== void 0 ? { name } : {} };
-}
-function decodeOptionalNamedEntity(value) {
-  return value === void 0 ? void 0 : decodeNamedEntity(value);
-}
-function decodeNullableNamedEntity(value) {
-  if (value === null) {
-    return null;
-  }
-  return decodeOptionalNamedEntity(value);
-}
-function decodeNamedUser(value) {
-  if (value === void 0 || !isJsonObject(value)) {
-    return void 0;
-  }
-  const displayName = stringProperty(value, "displayName");
-  if (displayName === void 0) {
-    return void 0;
-  }
-  const emailAddress = stringProperty(value, "emailAddress");
-  const active = typeof value.active === "boolean" ? value.active : void 0;
-  return {
-    displayName,
-    ...emailAddress !== void 0 ? { emailAddress } : {},
-    ...active !== void 0 ? { active } : {}
-  };
-}
-function decodeNullableUser(value) {
-  if (value === null) {
-    return null;
-  }
-  if (value === void 0) {
-    return void 0;
-  }
-  return decodeNamedUser(value);
-}
-function decodeParent(value) {
-  if (value === void 0 || !isJsonObject(value)) {
-    return void 0;
-  }
-  const key = stringProperty(value, "key");
-  if (key === void 0) {
-    return void 0;
-  }
-  const summary = stringProperty(value, "summary");
-  return { key, ...summary !== void 0 ? { summary } : {} };
-}
-function decodeStringArray(value) {
-  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : void 0;
-}
-function decodeNamedEntityArray(value) {
-  if (!Array.isArray(value)) {
-    return void 0;
-  }
-  const decoded = value.flatMap((item) => {
-    const entity = decodeNamedEntity(item);
-    return entity === void 0 ? [] : [entity];
-  });
-  return decoded.length === value.length ? decoded : void 0;
-}
-function decodeDescription(value) {
-  return value === void 0 || value === null || typeof value === "string" ? value : void 0;
-}
-function decodeCommentBlock(value) {
-  if (value === void 0) {
-    return void 0;
-  }
-  if (!isJsonObject(value)) {
-    return void 0;
-  }
-  const comments = decodeCommentArray(value.comments);
-  const total = typeof value.total === "number" ? value.total : void 0;
-  const maxResults = typeof value.maxResults === "number" ? value.maxResults : void 0;
-  const startAt = typeof value.startAt === "number" ? value.startAt : void 0;
-  if (value.comments !== void 0 && comments === void 0 || value.total !== void 0 && total === void 0 || value.maxResults !== void 0 && maxResults === void 0 || value.startAt !== void 0 && startAt === void 0) {
-    return void 0;
-  }
-  return {
-    ...comments !== void 0 ? { comments } : {},
-    ...total !== void 0 ? { total } : {},
-    ...maxResults !== void 0 ? { maxResults } : {},
-    ...startAt !== void 0 ? { startAt } : {}
-  };
-}
-function decodeCommentArray(value) {
-  if (!Array.isArray(value)) {
-    return void 0;
-  }
-  const decoded = value.flatMap((item) => {
-    const comment = decodeComment(item);
-    return comment === void 0 ? [] : [comment];
-  });
-  return decoded.length === value.length ? decoded : void 0;
-}
-function decodeComment(value) {
-  if (!isJsonObject(value)) {
-    return void 0;
-  }
-  const author = value.author !== void 0 ? decodeNamedUser(value.author) : void 0;
-  const updateAuthor = value.updateAuthor !== void 0 ? decodeNamedUser(value.updateAuthor) : void 0;
-  const body = typeof value.body === "string" ? value.body : void 0;
-  const created = stringProperty(value, "created");
-  const updated = stringProperty(value, "updated");
-  if (value.author !== void 0 && author === void 0 || value.updateAuthor !== void 0 && updateAuthor === void 0 || value.body !== void 0 && body === void 0 || value.created !== void 0 && created === void 0 || value.updated !== void 0 && updated === void 0) {
-    return void 0;
-  }
-  return {
-    ...author !== void 0 ? { author } : {},
-    ...updateAuthor !== void 0 ? { updateAuthor } : {},
-    ...body !== void 0 ? { body } : {},
-    ...created !== void 0 ? { created } : {},
-    ...updated !== void 0 ? { updated } : {}
-  };
-}
-
 // ../../plugins/jira/src/signals/link-prompt.ts
 var PROMPT_CLAIM_MARKER = "prompt-link-shown";
 async function isSessionLinked(store) {
@@ -6204,11 +6348,10 @@ async function runPromptLoop(store, suggestion) {
   }
   return buildPromptOutput(suggestion);
 }
-function buildLinkSuggestion(lead) {
+function buildLinkSuggestion(lead, touchpoint) {
   return `${lead} Ask the developer \u2014 as its own explicit question, not merged with anything else \u2014 whether to link an existing work item, create a new one, or skip. Then act on the answer:
 - Link existing: run \`work-item get --key <KEY> --scope session\` (the jira plugin CLI) for the chosen key. That stores the work item in this session, which links the session to it and emits the link signal. It links the SESSION to the work item \u2014 do NOT create any Jira issue link or attach a pull request to the ticket.
-- Create new: run the create-work-item flow; its \`work-item create\` stores the new item in this session, which links the session to it.
-- Skip: do nothing. Ask at most once per session; if they skip, do not ask again.`;
+- Create new: run the create-work-item flow. ` + (touchpoint === "pr" ? "Carry the URL of the pull request just created as `--for-pull-request <URL>` on `work-item create` to claim the new item for review. " : "") + "`work-item create` stores the new item in this session, which links the session to it.\n- Skip: do nothing. Ask at most once per session; if they skip, do not ask again.";
 }
 var LEADS = {
   branch: "A new git branch was just created, but this session has no Jira work item linked.",
@@ -7721,6 +7864,291 @@ async function cachedMetadata(store, resolve2) {
   return metadata;
 }
 
+// ../../plugins/jira/src/epic/links.ts
+var NONE = { blockedBy: [], blocks: [] };
+function isBlocksType(type) {
+  if (type === void 0 || !isJsonObject(type)) return false;
+  const name = typeof type.name === "string" ? type.name.trim().toLowerCase() : "";
+  const outward = typeof type.outward === "string" ? type.outward.trim().toLowerCase() : "";
+  return name === "blocks" || outward === "blocks";
+}
+function linkedKey(side) {
+  if (side === void 0 || !isJsonObject(side) || typeof side.key !== "string") return void 0;
+  try {
+    return asIssueKey(side.key);
+  } catch {
+    return void 0;
+  }
+}
+function blockLinksOf(issuelinks) {
+  if (!Array.isArray(issuelinks)) return NONE;
+  const blockedBy = /* @__PURE__ */ new Set();
+  const blocks = /* @__PURE__ */ new Set();
+  for (const link2 of issuelinks) {
+    if (!isJsonObject(link2) || !isBlocksType(link2.type)) continue;
+    const inward = linkedKey(link2.inwardIssue);
+    if (inward !== void 0) blockedBy.add(inward);
+    const outward = linkedKey(link2.outwardIssue);
+    if (outward !== void 0) blocks.add(outward);
+  }
+  return { blockedBy: [...blockedBy].sort(), blocks: [...blocks].sort() };
+}
+function mergeKeys(keys, more) {
+  const merged = [.../* @__PURE__ */ new Set([...keys ?? [], ...more])].sort();
+  return merged.length > 0 ? merged : void 0;
+}
+
+// ../../plugins/jira/src/epic/subtasks.ts
+function subtasksOf(value) {
+  if (!Array.isArray(value)) return void 0;
+  const rows = [];
+  for (const entry of value) {
+    const row = subtaskFrom(entry);
+    if (row !== void 0) rows.push(row);
+  }
+  return rows;
+}
+function subtaskFrom(entry) {
+  if (!isJsonObject(entry) || typeof entry.key !== "string") return void 0;
+  const fields = isJsonObject(entry.fields) ? entry.fields : entry;
+  const summary = fields.summary;
+  const status = decodeStatus(fields.status);
+  const issuetype = decodeNamedEntity(fields.issuetype);
+  if (typeof summary !== "string" || summary.length === 0) return void 0;
+  if (status === void 0 || issuetype === void 0) return void 0;
+  try {
+    return { key: asIssueKey(entry.key), summary, status, issuetype };
+  } catch {
+    return void 0;
+  }
+}
+
+// ../../plugins/jira/src/epic/record.ts
+var EPIC_LEVEL = 1;
+function isEpic(item) {
+  const { hierarchyLevel, name } = item.issuetype;
+  if (hierarchyLevel !== void 0) return hierarchyLevel === EPIC_LEVEL;
+  return name.toLowerCase() === "epic";
+}
+function parentIsEpic(item) {
+  return item.parent?.issuetype?.hierarchyLevel === EPIC_LEVEL;
+}
+function touchesEpic(item) {
+  return isEpic(item) || item.parent !== void 0 && (parentIsEpic(item) || isSubtask(item));
+}
+function isSubtask(item) {
+  const { hierarchyLevel, subtask } = item.issuetype;
+  if (hierarchyLevel !== void 0) return hierarchyLevel < 0;
+  return subtask === true;
+}
+async function recordEpicTouch(epics, item, options) {
+  if (!touchesEpic(item)) return void 0;
+  const parent = item.parent;
+  const merged = isEpic(item) ? epicHeader(item, await epics.getEpic(item.cloudId, item.key)) : parent === void 0 ? void 0 : parentIsEpic(item) ? childOfEpic(item, parent, await epics.getEpic(item.cloudId, asIssueKey(parent.key))) : await subtaskOfStory(epics, item, parent, options);
+  if (merged === void 0) return void 0;
+  const touched = touch(merged, options);
+  await epics.setEpic(touched);
+  return touched;
+}
+function epicHeader(item, existing) {
+  const url = typeof item.url === "string" ? item.url : existing?.url;
+  return {
+    ...existing,
+    cloudId: item.cloudId,
+    key: item.key,
+    summary: item.summary,
+    status: item.status,
+    ...item.assignee !== void 0 ? { assignee: item.assignee } : {},
+    ...url !== void 0 ? { url } : {},
+    codebases: existing?.codebases ?? {},
+    children: existing?.children ?? []
+  };
+}
+function childOfEpic(item, parent, existing) {
+  const children = existing?.children ?? [];
+  const current = children.find((child) => child.key === item.key);
+  const links = item.issuelinks !== void 0 ? blockLinksOf(item.issuelinks) : void 0;
+  const subtasks = item.subtasks !== void 0 ? subtasksOf(item.subtasks) : current?.subtasks;
+  const row = epicChildRow(
+    item,
+    links === void 0 ? current?.blockedBy : links.blockedBy,
+    subtasks
+  );
+  const replaced = children.map((child) => {
+    if (child.key === row.key) return row;
+    if (links === void 0 || !links.blocks.includes(child.key)) return child;
+    return { ...child, blockedBy: mergeKeys(child.blockedBy, [row.key]) };
+  });
+  return {
+    ...existing,
+    cloudId: item.cloudId,
+    key: asIssueKey(parent.key),
+    // The codec rejects an empty summary, so a parent without one is named by its key until a fuller read replaces it.
+    summary: parent.summary ?? existing?.summary ?? parent.key,
+    ...existing?.status === void 0 && parent.status !== void 0 ? { status: parent.status } : {},
+    codebases: existing?.codebases ?? {},
+    children: current === void 0 ? [...replaced, row] : replaced
+  };
+}
+function epicChildRow(item, blockedBy, subtasks) {
+  return {
+    ...subtaskRow(item),
+    ...blockedBy !== void 0 && blockedBy.length > 0 ? { blockedBy } : {},
+    ...subtasks !== void 0 && subtasks.length > 0 ? { subtasks } : {}
+  };
+}
+function subtaskRow(item) {
+  return {
+    key: item.key,
+    summary: item.summary,
+    status: item.status,
+    issuetype: { name: item.issuetype.name },
+    ...item.assignee !== void 0 ? { assignee: item.assignee } : {}
+  };
+}
+async function subtaskOfStory(epics, item, parent, options) {
+  const storyKey = asIssueKey(parent.key);
+  const row = subtaskRow(item);
+  const holder = (await epics.listEpics()).find(
+    (epic2) => epic2.cloudId === item.cloudId && epic2.children.some((child) => child.key === storyKey)
+  );
+  if (holder !== void 0) return withSubtask(holder, storyKey, row);
+  const story = await options.readParent?.(storyKey);
+  if (story === void 0 || story.parent === void 0 || !parentIsEpic(story)) return void 0;
+  if (story.cloudId !== item.cloudId) return void 0;
+  const epic = await epics.getEpic(story.cloudId, asIssueKey(story.parent.key));
+  return withSubtask(childOfEpic(story, story.parent, epic), storyKey, row);
+}
+function withSubtask(epic, storyKey, row) {
+  return {
+    ...epic,
+    children: epic.children.map((child) => {
+      if (child.key !== storyKey) return withoutSubtask(child, row.key);
+      const listed = child.subtasks ?? [];
+      const subtasks = listed.some((existing) => existing.key === row.key) ? listed.map((existing) => existing.key === row.key ? row : existing) : [...listed, row];
+      return { ...child, subtasks };
+    })
+  };
+}
+function withoutSubtask(child, key) {
+  if (!child.subtasks?.some((subtask) => subtask.key === key)) return child;
+  const { subtasks, ...rest } = child;
+  const remaining = subtasks?.filter((subtask) => subtask.key !== key) ?? [];
+  return remaining.length > 0 ? { ...rest, subtasks: remaining } : rest;
+}
+function touchStamp(kind, now = /* @__PURE__ */ new Date()) {
+  const at2 = now.toISOString();
+  return kind === "access" ? { lastAccessedAt: at2 } : { lastWrittenAt: at2 };
+}
+function stampCodebases(codebases, codebase, stamp) {
+  return { ...codebases, [codebase]: { ...codebases[codebase], ...stamp } };
+}
+function touch(record, options) {
+  const stamp = touchStamp(options.kind, options.now);
+  return {
+    ...record,
+    ...stamp,
+    codebases: stampCodebases(record.codebases, options.codebase, stamp)
+  };
+}
+async function touchEpic(epics, cloudId, key, options) {
+  const existing = await epics.getEpic(cloudId, key);
+  if (existing === void 0) return void 0;
+  const touched = touch(existing, options);
+  await epics.setEpic(touched);
+  return touched;
+}
+function codebaseOf(recorder) {
+  return typeof recorder.codebase === "function" ? recorder.codebase() : recorder.codebase;
+}
+async function recordEpicTouchWith(recorder, item, kind) {
+  if (recorder === void 0 || !touchesEpic(item)) return void 0;
+  const now = recorder.now?.();
+  return recordEpicTouch(recorder.epics, item, {
+    kind,
+    codebase: codebaseOf(recorder),
+    ...now !== void 0 ? { now } : {},
+    ...recorder.readParent !== void 0 ? { readParent: recorder.readParent } : {}
+  });
+}
+
+// ../../plugins/jira/src/epic/list.ts
+var DEFAULT_EPIC_LIST_LIMIT = 20;
+function latestTouch(touch2) {
+  const parsed = [touch2.lastWrittenAt, touch2.lastAccessedAt].filter((time) => time !== void 0).map((time) => ({ time, at: new Date(time).getTime() })).filter(({ at: at2 }) => !Number.isNaN(at2));
+  if (parsed.length === 0) return void 0;
+  return parsed.reduce((latest, candidate) => candidate.at > latest.at ? candidate : latest).time;
+}
+async function listEpics(epics, options) {
+  const { codebase, filter } = options;
+  const limit = options.limit ?? DEFAULT_EPIC_LIST_LIMIT;
+  const touchOf = (epic) => filter === "codebase" ? epic.codebases[codebase] : epic;
+  const ranked = (await epics.listEpics()).filter((epic) => options.showArchived === true || epic.archived !== true).flatMap((epic) => {
+    const touch2 = touchOf(epic);
+    return touch2 === void 0 ? [] : [{ epic, latest: latestTouch(touch2) }];
+  }).sort((a, b) => compareNewestFirst(a.latest, b.latest) || a.epic.key.localeCompare(b.epic.key)).slice(0, limit).map(({ epic }) => epic);
+  return { codebase, filter, epics: ranked };
+}
+function listingAsSeenFromCodebase(listing) {
+  if (listing.filter === "all") return listing;
+  return {
+    ...listing,
+    epics: listing.epics.map((epic) => withTouch(epic, epic.codebases[listing.codebase] ?? {}))
+  };
+}
+function withTouch(epic, touch2) {
+  const projected = { ...epic };
+  delete projected.lastWrittenAt;
+  delete projected.lastAccessedAt;
+  return { ...projected, ...touch2 };
+}
+function compareNewestFirst(a, b) {
+  if (a === b) return 0;
+  if (a === void 0) return 1;
+  if (b === void 0) return -1;
+  return new Date(b).getTime() - new Date(a).getTime();
+}
+
+// ../../plugins/jira/src/recent/record.ts
+var RECENT_ITEMS_PER_PROJECT = 50;
+function projectKeyOf2(key) {
+  return key.slice(0, key.lastIndexOf("-"));
+}
+async function recordTouchWith(recorder, item, kind, projectName) {
+  const settled = await Promise.allSettled([
+    recordEpicTouchWith(recorder, item, kind),
+    recordRecentTouch(recorder, item, kind, projectName)
+  ]);
+  const failure = settled.find((result) => result.status === "rejected");
+  if (failure !== void 0) throw failure.reason;
+}
+async function recordRecentTouch(recorder, item, kind, projectName) {
+  const recent = recorder?.recent;
+  if (recorder === void 0 || recent === void 0) return;
+  const projectKey = projectKeyOf2(item.key);
+  const group = await recent.getGroup(item.cloudId, projectKey);
+  const held = group?.items.find((existing) => existing.key === item.key);
+  const codebase = codebaseOf(recorder);
+  const stamp = touchStamp(kind, recorder.now?.());
+  const subtasks = item.subtasks !== void 0 ? subtasksOf(item.subtasks) : held?.subtasks;
+  const row = {
+    ...held,
+    ...epicChildRow(item, void 0, subtasks),
+    ...stamp,
+    codebases: stampCodebases(held?.codebases ?? {}, codebase, stamp)
+  };
+  const items = [...group?.items.filter((existing) => existing.key !== item.key) ?? [], row].sort((a, b) => (latestTouch(b) ?? "").localeCompare(latestTouch(a) ?? "")).slice(0, RECENT_ITEMS_PER_PROJECT);
+  const name = projectName ?? group?.name;
+  const written = {
+    cloudId: item.cloudId,
+    projectKey,
+    ...name !== void 0 ? { name } : {},
+    codebases: stampCodebases(group?.codebases ?? {}, codebase, stamp),
+    items
+  };
+  await recent.setGroup(written);
+}
+
 // ../../plugins/jira/src/work-item/twg-messages.ts
 function twgNotFoundDetail(where, undone) {
   return `${where}. Install and log in with twg first; see /twg-setup. Nothing was ${undone}.`;
@@ -7774,7 +8202,7 @@ async function fetchWorkItemUnchecked(options) {
   }
   const read = runner(binary, ["jira", "workitem", "get", key, "--full"], { site: chosenSite });
   if (!read.ok) {
-    if (isAuthFailure(read.detail)) {
+    if (isAuthFailure2(read.detail)) {
       throw notAuthenticated(read.detail);
     }
     if (isMissingOrForbidden(read.detail)) {
@@ -7801,6 +8229,13 @@ async function fetchWorkItemUnchecked(options) {
   if (projectContext !== void 0) {
     await memory.setProjectContext(projectContext);
   }
+  try {
+    await recordTouchWith(options.epicRecorder, prepared, "access", projectContext?.projectName);
+  } catch (error) {
+    console.error(
+      `${key} was read, but recording it for the Jira view failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const issueId = typeof hoisted.id === "string" ? hoisted.id : void 0;
   if (scope === "session") {
     const projectId = projectIdOf(hoisted.project);
@@ -7813,14 +8248,16 @@ async function fetchWorkItemUnchecked(options) {
     });
   }
   const stored = await memory.getWorkItem(scope, cloudId, prepared.key);
-  noteAssetRetrieval({
-    assetType: CONTENT.workItem.assetType,
-    assetCount: 1,
-    ...issueId !== void 0 ? { issueId } : {},
-    // Reusing a session link does not make a live Jira fetch a cache hit.
-    retrievalSource: "liveAtlassian",
-    siteSource: assetSiteSource(site, chosenSite)
-  });
+  if (options.internal !== true) {
+    noteAssetRetrieval({
+      assetType: CONTENT.workItem.assetType,
+      assetCount: 1,
+      ...issueId !== void 0 ? { issueId } : {},
+      // Reusing a session link does not make a live Jira fetch a cache hit.
+      retrievalSource: "liveAtlassian",
+      siteSource: assetSiteSource(site, chosenSite)
+    });
+  }
   return stored ?? prepared;
 }
 function resolveLiveSite(binary, runner, site, undone = "stored") {
@@ -7865,7 +8302,7 @@ function notAuthenticated(detail, undone = "stored") {
 function resolveDefaultSite(binary, runner, undone) {
   const result = runner(binary, ["doctor"]);
   if (!result.ok) {
-    if (isAuthFailure(result.detail)) {
+    if (isAuthFailure2(result.detail)) {
       throw notAuthenticated(result.detail, undone);
     }
     return void 0;
@@ -7884,7 +8321,7 @@ function resolveDefaultSite(binary, runner, undone) {
 function listJiraSites(binary, runner, undone) {
   const result = runner(binary, ["access"]);
   if (!result.ok) {
-    if (isAuthFailure(result.detail)) {
+    if (isAuthFailure2(result.detail)) {
       throw notAuthenticated(result.detail, undone);
     }
     throw new FetchWorkItemError(
@@ -7919,7 +8356,7 @@ function listJiraSites(binary, runner, undone) {
   }
   return [...byCloudId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
-function projectKeyOf2(key) {
+function projectKeyOf3(key) {
   const match = /^([A-Za-z][A-Za-z0-9_]*)-\d+$/.exec(key);
   return match?.[1];
 }
@@ -7936,7 +8373,7 @@ function projectExistsOnSite(binary, runner, projectKey, site) {
   return projectPresenceOnSite(binary, runner, projectKey, site) === "present";
 }
 function classifyMissingKey(key, siteInForce, chosenSite, detail, sites, binary, runner) {
-  const projectKey = projectKeyOf2(key);
+  const projectKey = projectKeyOf3(key);
   if (projectKey !== void 0 && projectExistsOnSite(binary, runner, projectKey, chosenSite)) {
     return new FetchWorkItemError(
       "work-item-not-found",
@@ -7968,7 +8405,7 @@ function listCandidates2(sites) {
   return `Candidate sites:
 ${lines}`;
 }
-function isAuthFailure(detail) {
+function isAuthFailure2(detail) {
   const text6 = String(detail ?? "").toLowerCase();
   return text6.includes("auth") || text6.includes("401") || text6.includes("log in") || text6.includes("login") || text6.includes("expired") || text6.includes("revoked");
 }
@@ -8099,7 +8536,7 @@ function readTree(located, options) {
       };
     }
   }
-  const counts = changeCounts(root, git);
+  const counts2 = changeCounts(root, git);
   return {
     tree: {
       path: root,
@@ -8107,9 +8544,9 @@ function readTree(located, options) {
       branch,
       defaultBranch: named,
       baseRef,
-      staged: counts.staged,
-      unstaged: counts.unstaged,
-      untracked: counts.untracked,
+      staged: counts2.staged,
+      unstaged: counts2.unstaged,
+      untracked: counts2.untracked,
       lfs: lfsTracked(root, git),
       fetch: options.fetch
     }
@@ -8501,7 +8938,7 @@ async function resolveLinkPrompt(sessionStore, payload, env = process.env) {
   if (touchpoint === void 0) {
     return void 0;
   }
-  return runPromptLoop(sessionStore, buildLinkSuggestion(LEADS[touchpoint]));
+  return runPromptLoop(sessionStore, buildLinkSuggestion(LEADS[touchpoint], touchpoint));
 }
 function resolveSessionTrigger(branch) {
   return branch !== null && extractFirstIssueKey(branch) !== void 0 ? "branchName" : void 0;
@@ -12318,7 +12755,7 @@ function chargeMergeWork(state) {
   state.totalMergeKeys++;
   if (state.maxTotalMergeKeys !== -1 && state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
 }
-function mergeKeys(state, frame, source, sourceTag) {
+function mergeKeys2(state, frame, source, sourceTag) {
   chargeMergeWork(state);
   for (const sourceKey of sourceTag.keys(source)) {
     chargeMergeWork(state);
@@ -12331,13 +12768,13 @@ function mergeKeys(state, frame, source, sourceTag) {
 }
 function mergeSource(state, frame, source, sourceTag) {
   state.position = frame.keyPosition;
-  if (isMappingTag(sourceTag)) mergeKeys(state, frame, source, sourceTag);
+  if (isMappingTag(sourceTag)) mergeKeys2(state, frame, source, sourceTag);
   else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) {
     if (source.length > 100) throwError$1(state, "abnormal merge sequence size");
     for (const element of source) {
       const elementTag = state.nodeTags.get(element);
       if (!elementTag) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
-      mergeKeys(state, frame, element, elementTag);
+      mergeKeys2(state, frame, element, elementTag);
     }
   } else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
 }
@@ -14612,14 +15049,867 @@ async function preflightDestination(options) {
   return outcome.verdict;
 }
 
+// ../../plugins/jira/src/panels/work-item.ts
+function workItemRow(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    throw new TypeError("Expected a work item as an object");
+  }
+  const key = sanitize(item.key);
+  if (key === "") {
+    throw new TypeError("Expected a work item carrying its key");
+  }
+  const summary = sanitize(item.summary);
+  const lines = [summary ? `${key}: ${summary}` : key];
+  const status = sanitize(item.status?.name);
+  if (status) {
+    lines.push(`\xB7 Status: ${status}`);
+  }
+  const assignee = sanitize(item.assignee?.displayName);
+  lines.push(`\xB7 Assignee: ${assignee || "none"}`);
+  const priority = sanitize(item.priority?.name);
+  if (priority) {
+    lines.push(`\xB7 Priority: ${priority}`);
+  }
+  const parent = sanitize(item.parent?.key);
+  if (parent) {
+    lines.push(`\xB7 Parent: ${parent}`);
+  }
+  const url = safeUrl(item.url) ?? browseUrl2(item.site, key);
+  if (url) {
+    lines.push(`\xB7 ${url}`);
+  }
+  return [sanitize(item.issuetype?.name) || "Work item", lines];
+}
+function browseUrl2(site, key) {
+  const name = sanitize(site);
+  if (name === "") {
+    return void 0;
+  }
+  const origin = safeUrl(name);
+  return origin !== void 0 ? safeUrl(new URL(`/browse/${key}`, origin).href) : safeUrl(`https://${name}.atlassian.net/browse/${key}`);
+}
+var HEADING_REGEX = /^\s*#{1,6}\s+/;
+var FENCE_REGEX = /^\s*```/;
+function detailLines(descriptionMarkdown) {
+  const lines = [];
+  for (const raw of String(descriptionMarkdown ?? "").split("\n")) {
+    if (FENCE_REGEX.test(raw)) {
+      continue;
+    }
+    const line = sanitize(raw.replace(HEADING_REGEX, ""));
+    lines.push(line === "" ? BLANK : line);
+  }
+  const first = lines.findIndex((line) => line !== BLANK);
+  if (first === -1) {
+    return [];
+  }
+  let last = lines.length - 1;
+  while (lines[last] === BLANK) {
+    last -= 1;
+  }
+  return lines.slice(first, last + 1);
+}
+function workItemPanel(item, descriptionMarkdown, widths = tableWidths()) {
+  const rows = [workItemRow(item)];
+  const details = detailLines(descriptionMarkdown);
+  if (details.length > 0) {
+    rows.push(["Details", details]);
+  }
+  return fencedTable({ rows }, widths);
+}
+
+// ../../plugins/jira/src/panels/claim.ts
+var STATES = {
+  pass: "\u2713",
+  warn: "!",
+  "n-a": "-",
+  stop: "\u2717"
+};
+function check(label, state, detail) {
+  return [`${STATES[state]} ${label}`, detail];
+}
+function plural(count2, one, many) {
+  return `${count2} ${count2 === 1 ? one : many}`;
+}
+function claimedItem(verdict) {
+  const { item, after } = verdict;
+  return {
+    key: item.key,
+    summary: item.summary,
+    url: item.url,
+    site: verdict.site,
+    issuetype: { name: item.type },
+    priority: { name: item.priority },
+    parent: { key: item.parent },
+    status: { name: after?.status?.name ?? item.status?.name },
+    assignee: after?.assignee !== void 0 ? after.assignee : item.assignee
+  };
+}
+function criteriaRow(criteria) {
+  if (!criteria) {
+    return check("Criteria", "warn", "No Acceptance criteria section");
+  }
+  if (!criteria.count) {
+    return check("Criteria", "warn", "Acceptance criteria carries no bullet");
+  }
+  return check("Criteria", "pass", plural(criteria.count, "criterion", "criteria"));
+}
+function assigneeRow(verdict) {
+  const { applied, after, user, mode } = verdict;
+  const current = sanitize(verdict.assignee?.current);
+  switch (verdict.assignee?.action) {
+    case "none":
+      return check("Assignee", "pass", "Already yours");
+    case "skip":
+      return check("Assignee", "n-a", current ? `Left with ${current}` : "Left unassigned");
+    case "ask":
+      return check("Assignee", "warn", `Assigned to ${current}; take over, or start without`);
+    case "claim": {
+      if (mode === "plan" || !applied) {
+        return check(
+          "Assignee",
+          "n-a",
+          current ? `${current}'s, would be taken over` : "Unassigned, would be claimed for you"
+        );
+      }
+      const landed = Boolean(after?.assignee?.accountId) && after?.assignee?.accountId === user?.accountId;
+      if (!applied.ok && !landed) {
+        return check("Assignee", "stop", sanitize(applied.detail) || "The update failed");
+      }
+      return check(
+        "Assignee",
+        "pass",
+        current ? `Taken over from ${current}` : "Was unassigned, now yours"
+      );
+    }
+    default:
+      return check("Assignee", "n-a", "Not reached");
+  }
+}
+function statusRow(verdict) {
+  const { applied, after, mode } = verdict;
+  const transition = verdict.transition ?? {};
+  const from = sanitize(transition.from) || "unknown";
+  switch (transition.action) {
+    case "skip":
+      return check("Status", "n-a", `Already ${from}`);
+    case "unavailable":
+      return check("Status", "warn", `No transition into In Progress from ${from}`);
+    case "ask":
+      return check(
+        "Status",
+        "warn",
+        `${plural(transition.candidates?.length ?? 0, "transition", "transitions")} into In Progress; choose one`
+      );
+    case "not-advertised":
+      return check(
+        "Status",
+        "warn",
+        `"${sanitize(transition.chosen)}" is not a transition into In Progress from ${from}`
+      );
+    case "stop":
+      return check("Status", "stop", `${from}; a claim does not reopen a complete item`);
+    case "transition": {
+      const to = sanitize(transition.to);
+      if (mode === "plan" || !applied) {
+        return check("Status", "n-a", `${from} \u2192 ${to}, would be taken`);
+      }
+      const landed = (after?.status?.name ?? "").toLowerCase() === to.toLowerCase() && to !== "";
+      if (!applied.ok && !landed) {
+        return check("Status", "stop", sanitize(applied.detail) || "The update failed");
+      }
+      return check("Status", "pass", `${from} \u2192 ${to}`);
+    }
+    default:
+      return check("Status", "n-a", "Not reached");
+  }
+}
+var FATES = {
+  kept: "kept on the branch",
+  stashed: "stashed",
+  worktree: "left in this tree"
+};
+function branchNote(plan, tree, after) {
+  if (plan.action === "reuse") {
+    return "reused";
+  }
+  if (plan.action === "checkout-existing") {
+    return "checked out";
+  }
+  const base2 = sanitize(plan.base) || sanitize(tree.branch) || "HEAD";
+  const elsewhere = after?.path && after.path !== tree.path ? `, in a worktree at ${after.path}` : "";
+  return `created off ${base2}${elsewhere}`;
+}
+function branchRows(branch) {
+  if (!branch || !branch.status) {
+    return [];
+  }
+  const reasons = branch.reasons ?? [];
+  const detail = reasons.map((reason) => sanitize(reason.detail)).filter(Boolean).join("; ");
+  const codes = new Set(reasons.map((reason) => reason.code));
+  const { tree, after } = branch;
+  const plan = branch.plan ?? {};
+  if (!tree) {
+    if (branch.status === "fail") {
+      return [check("Branch", "stop", detail || "The branch step failed")];
+    }
+    return after?.branch ? [check("Branch", "pass", sanitize(after.branch))] : [];
+  }
+  const rows = [
+    check(
+      "Repo",
+      "pass",
+      sanitize(tree.remote?.slug) || tree.path.split("/").filter(Boolean).at(-1) || tree.path
+    ),
+    check("Repo Writable", "pass", sanitize(tree.path))
+  ];
+  const staged = tree.staged ?? 0;
+  const untracked = tree.untracked ?? 0;
+  const modified = (tree.unstaged ?? 0) - untracked;
+  if (staged + modified + untracked === 0) {
+    rows.push(check("Working Tree", "pass", "Clean"));
+  } else if (staged + modified === 0) {
+    const files = plural(untracked, "untracked file", "untracked files");
+    rows.push(
+      check("Working Tree", "pass", codes.has("untracked-carried") ? `${files}, carried` : files)
+    );
+  } else {
+    const counts2 = `${staged} staged, ${modified} unstaged` + (untracked > 0 ? `, ${untracked} untracked` : "");
+    const fate = plan.changes ? FATES[plan.changes] : void 0;
+    if (codes.has("changes-pending")) {
+      rows.push(check("Working Tree", "warn", `${counts2}; keep, stash, or use a worktree`));
+    } else {
+      rows.push(check("Working Tree", "pass", fate ? `${counts2}, ${fate}` : counts2));
+    }
+  }
+  const name = sanitize(after?.branch) || sanitize(plan.branch) || "unknown";
+  if (branch.status === "fail") {
+    rows.push(check("Branch", "stop", detail || "The branch step failed"));
+  } else if (codes.has("base-needed")) {
+    rows.push(check("Branch", "warn", `${name}, awaiting your choice of base`));
+  } else if (codes.has("changes-pending")) {
+    const verb = plan.action === "create" ? "created" : "checked out";
+    rows.push(check("Branch", "warn", `${name}, not yet ${verb}`));
+  } else if (!after) {
+    rows.push(check("Branch", "pass", `${name}, would be ${branchNote(plan, tree, null)}`));
+  } else if (codes.has("base-stale") || codes.has("lfs-checkout-failed")) {
+    const caveats = [
+      ...codes.has("base-stale") ? [`${plan.base ?? "the base"} not refreshed`] : [],
+      ...codes.has("lfs-checkout-failed") ? ["LFS checkout failed"] : []
+    ];
+    rows.push(
+      check("Branch", "warn", `${name}, ${branchNote(plan, tree, after)}; ${caveats.join("; ")}`)
+    );
+  } else {
+    rows.push(check("Branch", "pass", `${name}, ${branchNote(plan, tree, after)}`));
+  }
+  return rows;
+}
+function claimRows(verdict) {
+  if (!verdict || typeof verdict !== "object" || Array.isArray(verdict)) {
+    throw new TypeError("Expected a claim verdict");
+  }
+  if (!verdict.item?.key) {
+    throw new TypeError("Expected a claim verdict carrying its item");
+  }
+  return [
+    workItemRow(claimedItem(verdict)),
+    criteriaRow(verdict.criteria),
+    assigneeRow(verdict),
+    statusRow(verdict),
+    ...branchRows(verdict.branch)
+  ];
+}
+function claimTable(verdict, widths = tableWidths()) {
+  return fencedTable({ rows: claimRows(verdict) }, widths);
+}
+
+// ../../plugins/jira/src/storage/user.ts
+var currentUserCodec = {
+  version: 1,
+  encode: (value) => ({ accountId: value.accountId, displayName: value.displayName }),
+  decode: (value) => {
+    if (!isJsonObject(value)) return void 0;
+    const accountId = stringProperty(value, "accountId");
+    if (accountId === void 0) return void 0;
+    const displayName = value.displayName === null ? null : stringProperty(value, "displayName");
+    if (value.displayName !== void 0 && value.displayName !== null && displayName === void 0) {
+      return void 0;
+    }
+    return { accountId, displayName: displayName ?? null };
+  }
+};
+var currentUserKey = defineStorageKey(
+  "jira/current-user",
+  currentUserCodec
+);
+function getCurrentUser(store) {
+  return store.get(currentUserKey);
+}
+function setCurrentUser(store, value) {
+  return store.set(currentUserKey, value);
+}
+
+// ../../plugins/jira/src/work-item/claim.ts
+var CLAIM_WORK_ITEM_SCHEMA = "jira-workflows/claim-work-item/v1";
+var TARGET_STATUS = "In Progress";
+var CATEGORY_NEW = "new";
+var CATEGORY_IN_PROGRESS = "indeterminate";
+var CATEGORY_DONE = "done";
+var DECISION_CODES = /* @__PURE__ */ new Set([
+  "assignee-takeover",
+  "transition-ambiguous",
+  "status-not-advertised"
+]);
+var lower = (value) => String(value ?? "").trim().toLowerCase();
+function checkArguments2(options) {
+  const key = issueKeyArgument(options.key);
+  if (options.takeOver && options.skipAssignee) {
+    throw new UsageError("--take-over and --skip-assignee exclude each other");
+  }
+  for (const field of options.fields ?? []) {
+    if (!field.includes("=")) {
+      throw new UsageError(`--field needs a <key>=<value>: ${field}`);
+    }
+  }
+  return key;
+}
+function planAssignee(current, user) {
+  if (current === null) {
+    return { action: "claim", current: null };
+  }
+  if (current.accountId !== void 0 && current.accountId === user.accountId) {
+    return { action: "none", current: current.displayName };
+  }
+  return { action: "ask", current: current.displayName };
+}
+function resolveAssignee(planned, {
+  takeOver = false,
+  skipAssignee = false
+} = {}) {
+  if (planned.action === "none") return planned;
+  if (skipAssignee) return { ...planned, action: "skip" };
+  if (planned.action === "ask" && takeOver) return { ...planned, action: "claim" };
+  return planned;
+}
+function chooseTransition(transitions, chosen, forReview = false) {
+  const categorised = transitions.some((t) => t.category !== null && t.category !== void 0);
+  const inProgressKeyed = categorised ? transitions.filter((t) => t.category === CATEGORY_IN_PROGRESS) : transitions.filter((t) => lower(t.to) === lower(TARGET_STATUS));
+  const available = forReview ? categorised ? transitions.filter((t) => t.category !== CATEGORY_DONE && t.category !== CATEGORY_NEW) : transitions.filter((t) => /review/i.test(t.to)) : inProgressKeyed;
+  const candidates = forReview ? available.filter((t) => /review/i.test(t.to)) : available;
+  const summary = (t) => ({
+    id: t.id,
+    name: t.name,
+    to: t.to
+  });
+  if (chosen !== void 0) {
+    const picked = available.find(
+      (t) => lower(t.to) === lower(chosen) || lower(t.name) === lower(chosen)
+    );
+    if (picked) {
+      return {
+        action: "transition",
+        from: null,
+        ...summary(picked),
+        candidates: candidates.map(summary)
+      };
+    }
+    return {
+      action: "not-advertised",
+      from: null,
+      chosen,
+      candidates: available.map(summary)
+    };
+  }
+  const named = forReview ? void 0 : candidates.find((t) => lower(t.to) === lower(TARGET_STATUS));
+  if (named) {
+    return {
+      action: "transition",
+      from: null,
+      ...summary(named),
+      candidates: candidates.map(summary)
+    };
+  }
+  if (candidates.length === 1) {
+    return {
+      action: "transition",
+      from: null,
+      ...summary(candidates[0]),
+      candidates: candidates.map(summary)
+    };
+  }
+  if (candidates.length > 1) {
+    return { action: "ask", from: null, candidates: candidates.map(summary) };
+  }
+  return {
+    action: "unavailable",
+    from: null,
+    candidates: (forReview ? available : transitions).map(summary)
+  };
+}
+function decodeTransition(value) {
+  if (!isJsonObject(value)) return void 0;
+  const id = typeof value.id === "string" ? value.id : typeof value.id === "number" ? String(value.id) : void 0;
+  const to = isJsonObject(value.to) ? value.to : void 0;
+  const status = isJsonObject(value.status) ? value.status : void 0;
+  const toName = to && typeof to.name === "string" ? to.name : void 0;
+  const flatToName = typeof value.toName === "string" ? value.toName : void 0;
+  const statusName = status && typeof status.name === "string" ? status.name : void 0;
+  const actionName = typeof value.name === "string" ? value.name : void 0;
+  const targetName = toName ?? flatToName ?? statusName ?? actionName;
+  if (id === void 0 || targetName === void 0) return void 0;
+  const categoryOf = (holder) => {
+    const category = holder?.statusCategory;
+    return category !== void 0 && isJsonObject(category) && typeof category.key === "string" ? category.key : null;
+  };
+  return {
+    id,
+    name: actionName ?? targetName,
+    to: targetName,
+    category: categoryOf(to) ?? categoryOf(status) ?? categoryKey(value.category)
+  };
+}
+var CATEGORY_KEYS = {
+  "to do": CATEGORY_NEW,
+  [CATEGORY_NEW]: CATEGORY_NEW,
+  "in progress": CATEGORY_IN_PROGRESS,
+  [CATEGORY_IN_PROGRESS]: CATEGORY_IN_PROGRESS,
+  done: CATEGORY_DONE
+};
+function categoryKey(value) {
+  return typeof value === "string" ? CATEGORY_KEYS[lower(value)] ?? null : null;
+}
+function extractTransitions(payload) {
+  const raw = extractArrayPayload(payload, ["transitions"]) ?? [];
+  return raw.flatMap((item) => {
+    const decoded = decodeTransition(item);
+    return decoded === void 0 ? [] : [decoded];
+  });
+}
+function planTransition(status, discover, chosen, forReview = false) {
+  const { category, name: from } = status;
+  if (category === CATEGORY_DONE) {
+    return { action: "stop", from, reason: "The item is complete" };
+  }
+  if (forReview && (chosen !== void 0 ? lower(from) === lower(chosen) : /review/i.test(from ?? ""))) {
+    return { action: "skip", from, reason: "Already in review" };
+  }
+  if (category === CATEGORY_IN_PROGRESS && !forReview) {
+    return { action: "skip", from, reason: "Already in progress" };
+  }
+  if (category !== null && category !== CATEGORY_NEW && category !== CATEGORY_IN_PROGRESS) {
+    return { action: "stop", from, reason: `Unrecognised status category "${category}"` };
+  }
+  const result = discover();
+  if (!result.ok) {
+    return { action: "unavailable", from, reason: result.detail, candidates: [] };
+  }
+  return { ...chooseTransition(extractTransitions(result.payload), chosen, forReview), from };
+}
+function buildCommand(key, site, assignee, transition, fields = []) {
+  const args = ["jira", "workitem", "update", "--id", key];
+  if (assignee.action === "claim") args.push("--assignee", "me");
+  if (transition.action === "transition" && transition.to !== void 0)
+    args.push("--status", transition.to);
+  if (args.length === 5) return void 0;
+  for (const field of fields) args.push("--field", field);
+  const displayed = site ? [...args, "--site", site] : args;
+  const shown = displayed.map((a) => /[\s"]/.test(a) ? JSON.stringify(a) : a).join(" ");
+  return { args, display: `twg ${shown}` };
+}
+var CRITERIA_HEADING_RE = /^##\s+(?:acceptance\s+criteria|done\s+when)\s*$/i;
+var LEVEL_TWO_HEADING_RE = /^##\s/;
+var TOP_LEVEL_LIST_ITEM_RE = /^(?:[-*+]|\d+[.)])\s+\S/;
+function countCriteria(description) {
+  if (typeof description !== "string") return null;
+  let inSection = false;
+  let found = false;
+  let count2 = 0;
+  for (const line of description.split(/\r?\n/)) {
+    if (CRITERIA_HEADING_RE.test(line)) {
+      if (found) break;
+      found = true;
+      inSection = true;
+    } else if (LEVEL_TWO_HEADING_RE.test(line)) {
+      inSection = false;
+    } else if (inSection && TOP_LEVEL_LIST_ITEM_RE.test(line)) {
+      count2 += 1;
+    }
+  }
+  return found ? { count: count2 } : null;
+}
+function readRaw(runner, binary, key, fields, site) {
+  const result = runner(
+    binary,
+    ["jira", "workitem", "get", key, "--fields", fields],
+    site !== void 0 ? { site } : {}
+  );
+  if (!result.ok || result.payload === void 0) return void 0;
+  const unwrapped = unwrapWorkItemEnvelope(result.payload);
+  if (unwrapped === void 0) return void 0;
+  const record = hoistFields(unwrapped);
+  const rawAssignee = record.assignee;
+  const assignee = rawAssignee === null ? null : isJsonObject(rawAssignee) ? {
+    accountId: typeof rawAssignee.accountId === "string" ? rawAssignee.accountId : void 0,
+    displayName: typeof rawAssignee.displayName === "string" ? rawAssignee.displayName : null
+  } : void 0;
+  const rawStatus = record.status;
+  const status = isJsonObject(rawStatus) ? {
+    name: typeof rawStatus.name === "string" ? rawStatus.name : null,
+    category: isJsonObject(rawStatus.statusCategory) && typeof rawStatus.statusCategory.key === "string" ? rawStatus.statusCategory.key : null
+  } : void 0;
+  return { assignee, status };
+}
+function decodeCurrentUser(result) {
+  if (!result.ok || result.payload === void 0 || !isJsonObject(result.payload)) return void 0;
+  const data = result.payload.data;
+  const record = isJsonObject(data) && isJsonObject(data.user) ? data.user : data;
+  if (!isJsonObject(record)) return void 0;
+  const accountId = typeof record.accountId === "string" ? record.accountId : void 0;
+  if (accountId === void 0) return void 0;
+  const displayName = typeof record.name === "string" ? record.name : typeof record.displayName === "string" ? record.displayName : null;
+  return { accountId, displayName };
+}
+async function currentUser(runner, binary, memory) {
+  const cached = await getCurrentUser(memory.plugin);
+  if (cached !== void 0) return cached;
+  const user = decodeCurrentUser(runner(binary, ["user", "get"]));
+  if (user?.accountId !== void 0) {
+    await setCurrentUser(memory.plugin, {
+      accountId: user.accountId,
+      displayName: user.displayName
+    });
+  }
+  return user;
+}
+function emptyExtra(key, site, mode) {
+  return {
+    key,
+    site,
+    mode,
+    item: null,
+    criteria: null,
+    user: null,
+    assignee: null,
+    transition: null,
+    command: null,
+    applied: null,
+    after: null
+  };
+}
+function mapFetchError(key, siteOption, mode, error) {
+  if (!(error instanceof FetchWorkItemError)) throw error;
+  const common = emptyExtra(key, siteOption ?? null, mode);
+  if (error.code === "wrong-site" || error.code === "cloud-id-unresolved") {
+    return fail(CLAIM_WORK_ITEM_SCHEMA, [{ code: "site-unresolved", detail: error.message }], {
+      ...common,
+      sites: error.sites
+    });
+  }
+  return fail(
+    CLAIM_WORK_ITEM_SCHEMA,
+    [{ code: error.code, detail: error.message }],
+    common
+  );
+}
+async function claim(input) {
+  const key = checkArguments2(input);
+  const options = {
+    ...input,
+    site: input.site ?? await resolveIndexedSite(input.memory, key)
+  };
+  const env = options.env ?? process.env;
+  const runner = options.runner ?? runTwgJson;
+  const planOnly = options.planOnly ?? false;
+  const mode = planOnly ? "plan" : "apply";
+  const fields = options.fields ?? [];
+  let binary;
+  try {
+    binary = resolveTwgBinary(env);
+  } catch (error) {
+    if (error instanceof TwgNotFoundError) {
+      return fail(
+        CLAIM_WORK_ITEM_SCHEMA,
+        [{ code: "twg-not-found", detail: error.message }],
+        emptyExtra(key, options.site ?? null, mode)
+      );
+    }
+    throw error;
+  }
+  let fetched;
+  try {
+    fetched = await fetchWorkItem({
+      key,
+      site: options.site,
+      scope: "session",
+      linkSource: options.linkSource ?? "claim",
+      memory: options.memory,
+      runner,
+      env
+    });
+  } catch (error) {
+    return mapFetchError(key, options.site, mode, error);
+  }
+  const user = await currentUser(runner, binary, options.memory);
+  if (user === void 0) {
+    return fail(
+      CLAIM_WORK_ITEM_SCHEMA,
+      [{ code: "user-unresolved", detail: "twg user get returned no accountId" }],
+      emptyExtra(key, options.site ?? null, mode)
+    );
+  }
+  const effectiveSite = options.site ?? (typeof fetched.site === "string" ? fetched.site : null);
+  const rawAssignee = readRaw(runner, binary, key, "assignee", options.site)?.assignee;
+  const current = fetched.assignee === null || fetched.assignee === void 0 ? null : rawAssignee === void 0 ? { accountId: void 0, displayName: fetched.assignee.displayName } : rawAssignee;
+  const assignee = resolveAssignee(planAssignee(current, user), {
+    takeOver: options.takeOver,
+    skipAssignee: options.skipAssignee
+  });
+  const transition = planTransition(
+    { name: fetched.status?.name ?? null, category: fetched.status?.statusCategory?.key ?? null },
+    () => runner(
+      binary,
+      ["jira", "workitem", "transition", "--id", key],
+      options.site !== void 0 ? { site: options.site } : {}
+    ),
+    options.status,
+    options.forReview
+  );
+  const item = {
+    key: fetched.key,
+    summary: fetched.summary ?? null,
+    url: typeof fetched.site === "string" ? browseUrl(fetched.site, fetched.key) : null,
+    type: fetched.issuetype?.name ?? null,
+    priority: fetched.priority?.name ?? null,
+    parent: fetched.parent?.key ?? null,
+    status: {
+      name: fetched.status?.name ?? null,
+      category: fetched.status?.statusCategory?.key ?? null
+    },
+    assignee: current
+  };
+  const command = buildCommand(key, options.site, assignee, transition, fields);
+  const common = {
+    key,
+    site: effectiveSite,
+    mode,
+    item,
+    criteria: countCriteria(fetched.description),
+    user,
+    assignee,
+    transition,
+    command: command?.display ?? null,
+    applied: null,
+    after: null
+  };
+  if (transition.action === "stop") {
+    return fail(
+      CLAIM_WORK_ITEM_SCHEMA,
+      [
+        {
+          code: "item-complete",
+          detail: `${key} is ${transition.from}; a claim does not reopen a complete item`
+        }
+      ],
+      {
+        ...common,
+        command: null
+      }
+    );
+  }
+  const decisions = [];
+  const target = options.forReview ? "review" : "In Progress";
+  if (assignee.action === "ask") {
+    decisions.push({
+      code: "assignee-takeover",
+      detail: `${key} is assigned to ${assignee.current}; re-run with --take-over or --skip-assignee`
+    });
+  }
+  if (transition.action === "ask") {
+    decisions.push({
+      code: "transition-ambiguous",
+      detail: `${key} has ${transition.candidates?.length ?? 0} transitions into ${target}; re-run with --status <name>`
+    });
+  }
+  if (transition.action === "not-advertised") {
+    decisions.push({
+      code: "status-not-advertised",
+      detail: `"${transition.chosen}" is not an available transition into ${target} from ${transition.from}`
+    });
+  }
+  if (decisions.length > 0) {
+    return warn(CLAIM_WORK_ITEM_SCHEMA, decisions, common);
+  }
+  const reasons = [];
+  if (transition.action === "unavailable") {
+    reasons.push({
+      code: "transition-unavailable",
+      detail: transition.reason ?? `${key} has no transition into ${target} from ${transition.from}`
+    });
+  }
+  if (assignee.action === "none" && transition.action === "skip") {
+    reasons.push({
+      code: "already-claimed",
+      detail: `${key} is already yours and already ${transition.from}`
+    });
+  }
+  if (assignee.action === "skip" && transition.action === "skip") {
+    reasons.push({
+      code: "nothing-to-do",
+      detail: `${key} is already ${transition.from} and the assignee was left alone`
+    });
+  }
+  if (!command || planOnly) {
+    if (reasons.some((r) => r.code === "transition-unavailable")) {
+      return warn(CLAIM_WORK_ITEM_SCHEMA, reasons, common);
+    }
+    return pass(CLAIM_WORK_ITEM_SCHEMA, common, { reasons });
+  }
+  const written = runner(
+    binary,
+    command.args,
+    options.site !== void 0 ? { site: options.site } : {}
+  );
+  const applied = {
+    ok: written.ok,
+    ...written.ok ? {} : { detail: written.detail }
+  };
+  const readBack = readRaw(runner, binary, key, "assignee,status", options.site);
+  const after = readBack ? { assignee: readBack.assignee ?? null, status: readBack.status ?? null } : null;
+  if (after !== null) {
+    await refreshClaimCache(options.memory, fetched, after, options.epicRecorder);
+  }
+  if (!written.ok) {
+    return fail(
+      CLAIM_WORK_ITEM_SCHEMA,
+      [...reasons, { code: "write-failed", detail: written.detail ?? "twg exited non-zero" }],
+      {
+        ...common,
+        applied,
+        after
+      }
+    );
+  }
+  const landed = after !== null && (assignee.action !== "claim" || after.assignee?.accountId === user.accountId) && (transition.action !== "transition" || lower(after.status?.name) === lower(transition.to));
+  if (after === null && options.forReview) {
+    reasons.push({
+      code: "read-back-mismatch",
+      detail: `The update returned ok but the final assignee and status of ${key} could not be read back`
+    });
+  }
+  if (after !== null && !landed) {
+    reasons.push({
+      code: "read-back-mismatch",
+      detail: `The update returned ok but ${key} reads back as ${after.status?.name ?? "unknown"}, assigned to ${after.assignee?.displayName ?? "nobody"}`
+    });
+  }
+  if (reasons.some((r) => r.code === "transition-unavailable" || r.code === "read-back-mismatch")) {
+    return warn(CLAIM_WORK_ITEM_SCHEMA, reasons, { ...common, applied, after });
+  }
+  return pass(CLAIM_WORK_ITEM_SCHEMA, { ...common, applied, after }, { reasons });
+}
+async function refreshClaimCache(memory, fetched, after, epicRecorder) {
+  try {
+    const status = after.status;
+    const patched = await memory.patchWorkItem("session", {
+      cloudId: fetched.cloudId,
+      key: fetched.key,
+      assignee: after.assignee === null ? null : { displayName: after.assignee.displayName ?? fetched.assignee?.displayName ?? "" },
+      // `patchWorkItem` replaces `status` whole, not field by field, so a
+      // read-back that answered no category must still carry the item's
+      // existing one forward rather than dropping it from the cache.
+      ...status !== null ? {
+        status: {
+          name: status.name ?? fetched.status.name,
+          ...status.category !== null ? { statusCategory: { key: status.category } } : fetched.status.statusCategory !== void 0 ? { statusCategory: fetched.status.statusCategory } : {}
+        }
+      } : {}
+    });
+    await recordTouchWith(epicRecorder, patched, "write");
+  } catch {
+  }
+}
+async function withBranch(result, options) {
+  const path8 = options.path ?? process.cwd();
+  const git = options.git ?? runGit;
+  const preparer = options.preparer ?? prepareBranch;
+  const key = asIssueKey(options.key);
+  const root = topLevel(path8, git);
+  if (root === null) {
+    return {
+      ...result,
+      branch: { action: "skipped", detail: `${path8} is not inside a git working tree` }
+    };
+  }
+  if (currentBranch(root, git) === null) {
+    return {
+      ...result,
+      branch: { action: "skipped", detail: `${root} is on a detached HEAD` }
+    };
+  }
+  const item = result.item;
+  const branchVerdict = await preparer({
+    key,
+    path: root,
+    site: result.site ?? options.site,
+    planOnly: options.planOnly ?? false,
+    fetch: options.fetch,
+    // The plugin scope holds the repository's fetch preference; the item is
+    // given, so nothing is read into the session scope here.
+    memory: options.memory,
+    ...item ? {
+      item: {
+        key: item.key,
+        summary: item.summary,
+        site: result.site ?? options.site ?? void 0
+      }
+    } : {},
+    git,
+    env: options.env
+  });
+  let next = { ...result, branch: branchVerdict };
+  if (branchVerdict.status === "fail") {
+    const detail = branchVerdict.reasons.map((r) => r.detail).filter(Boolean).join("; ") || "prepare-branch failed";
+    next = withReason(next, { code: "branch-failed", detail }, "warn");
+  } else if (branchVerdict.status === "warn" && branchVerdict.reasons.some((r) => r.code === "base-needed" || r.code === "changes-pending")) {
+    const detail = branchVerdict.reasons.map((r) => r.detail).filter(Boolean).join("; ");
+    next = withReason(next, { code: "branch-pending", detail }, "warn");
+  }
+  return next;
+}
+async function claimAndBranch(options) {
+  const result = await claim(options);
+  if (!options.prepareBranch) return result;
+  if (result.status === "fail" || result.reasons.some((r) => DECISION_CODES.has(r.code))) {
+    return { ...result, branch: { action: "skipped", detail: "The claim did not land" } };
+  }
+  return withBranch(result, options);
+}
+function withPanels(result) {
+  const { item } = result;
+  if (item === null) return { ...result, panels: "" };
+  return { ...result, panels: claimTable({ ...result, item }) };
+}
+async function claimWorkItem(options) {
+  return withPanels(await claimAndBranch(options));
+}
+
 // ../../plugins/jira/src/work-item/create.ts
 var CREATE_WORK_ITEM_SCHEMA = "jira-workflows/create-work-item/v1";
 var DESCRIPTION_FORMATS = ["html", "markdown", "plain"];
 var DESCRIPTION_PLACEHOLDER = "<description>";
-function checkArguments2(options) {
+function checkArguments3(options) {
   if (options.space.trim().length === 0) throw new UsageError("--space is blank");
   if (options.type.trim().length === 0) throw new UsageError("--type is blank");
   if (options.summary.trim().length === 0) throw new UsageError("--summary is blank");
+  if (options.forPullRequest !== void 0) {
+    try {
+      const url = new URL(options.forPullRequest);
+      if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Not HTTP");
+    } catch {
+      throw new UsageError("--for-pull-request needs an absolute HTTP(S) pull request URL");
+    }
+  }
   if (options.descriptionFormat !== void 0 && !DESCRIPTION_FORMATS.includes(options.descriptionFormat)) {
     throw new UsageError(
       `--description-format must be one of ${DESCRIPTION_FORMATS.join(", ")}: ${options.descriptionFormat}`
@@ -14631,7 +15921,7 @@ function checkArguments2(options) {
     }
   }
 }
-function buildCommand(options) {
+function buildCommand2(options) {
   const args = [
     "jira",
     "workitem",
@@ -14671,7 +15961,7 @@ function extractCreatedKey(payload) {
   }
   return void 0;
 }
-function emptyExtra(options, command) {
+function emptyExtra2(options, command) {
   return {
     key: null,
     url: null,
@@ -14701,15 +15991,14 @@ async function refreshFieldsAfterFailedCreate(options, indexed, runner, env) {
   });
   return verdict.fields;
 }
-async function createWorkItem(options) {
-  checkArguments2(options);
+async function submitCreate(options) {
   const env = options.env ?? process.env;
   const runner = options.runner ?? runTwgJson;
   const indexed = await resolveIndexedProject(options.memory, options.space, options.site);
   const site = options.site ?? indexed?.tenantName;
   const resolved = { ...options, site };
-  const command = buildCommand(resolved);
-  const common = emptyExtra(resolved, command);
+  const command = buildCommand2(resolved);
+  const common = emptyExtra2(resolved, command);
   let binary;
   try {
     binary = resolveTwgBinary(env);
@@ -14717,12 +16006,7 @@ async function createWorkItem(options) {
     if (error instanceof TwgNotFoundError) {
       return fail(
         CREATE_WORK_ITEM_SCHEMA,
-        [
-          {
-            code: "twg-not-found",
-            detail: twgNotFoundDetail(error.message, "created")
-          }
-        ],
+        [{ code: "twg-not-found", detail: twgNotFoundDetail(error.message, "created") }],
         common
       );
     }
@@ -14747,35 +16031,24 @@ async function createWorkItem(options) {
     const detail = written.ok ? "twg reported the create as successful but returned no issue key; the item may exist in Jira, and the session was not linked to it." : `twg exited zero but its output could not be read (${written.detail ?? "not JSON"}); the item may exist in Jira, and the session was not linked to it.`;
     return warn(CREATE_WORK_ITEM_SCHEMA, [{ code: "key-unresolved", detail }], common);
   }
-  const withKey = {
+  return pass(CREATE_WORK_ITEM_SCHEMA, {
     ...common,
     key,
     url: site !== void 0 ? browseUrl(site, key) : null
-  };
+  });
+}
+async function linkToSession(created, options) {
+  const { key } = created;
+  let stored;
   try {
-    const stored = await fetchWorkItem({
+    stored = await fetchWorkItem({
       key,
-      site,
+      site: created.site ?? void 0,
       scope: "session",
       linkSource: "workItemCreate",
       memory: options.memory,
-      runner,
-      env
-    });
-    const storedSite = typeof stored.site === "string" ? stored.site : void 0;
-    const url = storedSite !== void 0 ? browseUrl(storedSite, key) : withKey.url;
-    return pass(CREATE_WORK_ITEM_SCHEMA, {
-      ...withKey,
-      site: site ?? storedSite ?? null,
-      url,
-      linked: true,
-      item: {
-        key: stored.key,
-        summary: stored.summary ?? null,
-        url,
-        type: stored.issuetype?.name ?? null,
-        status: stored.status?.name ?? null
-      }
+      runner: options.runner,
+      env: options.env
     });
   } catch (error) {
     const cause = error instanceof FetchWorkItemError ? ` (${error.code}): ${error.message}` : `: ${error instanceof Error ? error.message : String(error)}`;
@@ -14783,13 +16056,92 @@ async function createWorkItem(options) {
       code: "link-failed",
       detail: `${key} was created, but reading it back into the session failed${cause}`
     };
-    return warn(CREATE_WORK_ITEM_SCHEMA, [reason], withKey);
+    return withReason(created, reason, "warn");
   }
+  try {
+    await recordTouchWith(options.epicRecorder, stored, "write");
+  } catch (error) {
+    console.error(
+      `${key} was created, but recording it for the Jira view failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  const storedSite = typeof stored.site === "string" ? stored.site : void 0;
+  const url = storedSite !== void 0 ? browseUrl(storedSite, key) : created.url;
+  return {
+    ...created,
+    site: created.site ?? storedSite ?? null,
+    url,
+    linked: true,
+    item: {
+      key: stored.key,
+      summary: stored.summary ?? null,
+      url,
+      type: stored.issuetype?.name ?? null,
+      status: stored.status?.name ?? null
+    }
+  };
+}
+async function claimForPullRequest(linked, pullRequest, options) {
+  const { key } = linked;
+  const tracking = { pullRequest, claim: null };
+  const resume = `For recovery, use work-item claim --key ${key} --for-review only as its verdict permits; do not create another item.`;
+  try {
+    const claim2 = await claimWorkItem({
+      key,
+      site: linked.site ?? options.site,
+      forReview: true,
+      linkSource: "workItemCreate",
+      memory: options.memory,
+      runner: options.runner,
+      env: options.env
+    });
+    const current = claim2.after ?? claim2.item;
+    const result = {
+      ...linked,
+      item: linked.item === null || current === null ? linked.item : {
+        ...linked.item,
+        status: current.status?.name ?? linked.item.status,
+        assignee: current.assignee
+      },
+      tracking: { ...tracking, claim: claim2 }
+    };
+    return claim2.status === "pass" ? result : withReason(
+      result,
+      {
+        code: "tracking-incomplete",
+        detail: `${key} was created, but its review claim is incomplete. ${resume}`
+      },
+      "warn"
+    );
+  } catch (error) {
+    return withReason(
+      { ...linked, tracking },
+      {
+        code: "tracking-incomplete",
+        detail: `${key} was created, but its review claim failed: ${error instanceof Error ? error.message : String(error)}. ${resume}`
+      },
+      "warn"
+    );
+  }
+}
+function hasKey(verdict) {
+  return verdict.key !== null;
+}
+async function createWorkItem(options) {
+  checkArguments3(options);
+  const tracking = options.forPullRequest !== void 0 ? { tracking: { pullRequest: options.forPullRequest, claim: null } } : {};
+  const created = await submitCreate(options);
+  if (created.status !== "pass" || !hasKey(created)) return { ...created, ...tracking };
+  const linked = await linkToSession(created, options);
+  if (!linked.linked || !hasKey(linked) || options.forPullRequest === void 0) {
+    return { ...linked, ...tracking };
+  }
+  return claimForPullRequest(linked, options.forPullRequest, options);
 }
 
 // ../../plugins/jira/src/work-item/read.ts
 async function readWorkItem(options) {
-  const { site, scope, refresh, memory, runner, env } = options;
+  const { site, scope, refresh, memory, runner, env, epicRecorder } = options;
   const issueKey = asIssueKey(options.key);
   const projectKey = projectKeyOfIssueKey(issueKey);
   const indexed = await memory.getCloudSites(projectKey);
@@ -14818,7 +16170,8 @@ async function readWorkItem(options) {
     scope,
     memory,
     runner,
-    env
+    env,
+    epicRecorder
   });
   return { record, fetched: true };
 }
@@ -14834,7 +16187,7 @@ ${lines}`;
 // ../../plugins/jira/src/work-item/comment.ts
 var COMMENT_WORK_ITEM_SCHEMA = "jira-workflows/comment-work-item/v1";
 var BODY_FORMATS = DESCRIPTION_FORMATS;
-function checkArguments3(options) {
+function checkArguments4(options) {
   if (options.body.trim().length === 0) throw new UsageError("--body is blank");
   if (options.bodyFormat !== void 0 && !BODY_FORMATS.includes(options.bodyFormat)) {
     throw new UsageError(
@@ -14848,7 +16201,7 @@ function createdCommentOf(payload) {
   return typeof comment.id === "string" || typeof comment.id === "number" ? comment : void 0;
 }
 async function commentOnWorkItem(options) {
-  checkArguments3(options);
+  checkArguments4(options);
   const { key, memory } = options;
   const env = options.env ?? process.env;
   const runner = options.runner ?? runTwgJson;
@@ -14900,7 +16253,7 @@ async function postAndLink(options, binary, runner, picked, site, common) {
   const posted = runner(binary, args, site !== void 0 ? { site } : {});
   if (!posted.ok && posted.malformed !== true) {
     const detail = posted.detail ?? "twg exited non-zero";
-    if (isAuthFailure(detail))
+    if (isAuthFailure2(detail))
       return notAuthenticated2(notAuthenticatedDetail(detail, "posted"), common);
     if (liveSites !== void 0 && options.site === void 0 && isMissingOrForbidden(detail) && projectPresenceOnSite(binary, runner, projectKey, void 0) === "absent") {
       return fail(
@@ -14994,9 +16347,9 @@ function setGithubPullRequestsPreference(store, value) {
 
 // ../../plugins/jira/src/changes/publish.ts
 var REVIEW_LIKE = /review/i;
-var CATEGORY_DONE = "done";
+var CATEGORY_DONE2 = "done";
 var MIN_TRANSITION_TIMEOUT_MS = 18e4;
-var lower = (value) => String(value ?? "").trim().toLowerCase();
+var lower2 = (value) => String(value ?? "").trim().toLowerCase();
 var firstLine4 = (text6) => text6.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
 var gitFailure2 = (result, fallback) => firstLine4(result.stderr) || firstLine4(result.stdout) || fallback;
 function locateTree2(path8, git) {
@@ -15062,7 +16415,7 @@ function readTree2(located, options) {
       }
     };
   }
-  const counts = changeCounts(root, git);
+  const counts2 = changeCounts(root, git);
   const upstream2 = upstream(root, git);
   return {
     ...stale !== void 0 ? { stale } : {},
@@ -15072,8 +16425,8 @@ function readTree2(located, options) {
       branch,
       defaultBranch: named,
       baseRef,
-      staged: counts.staged,
-      unstaged: counts.unstaged,
+      staged: counts2.staged,
+      unstaged: counts2.unstaged,
       upstream: upstream2,
       unpushed: upstream2 === null ? null : unpushedCount(root, git),
       commits: commitsAhead(root, baseRef, git),
@@ -15095,13 +16448,13 @@ function transitionCandidates(payload) {
     return [{ id, name: name ?? target, to: target }];
   });
 }
-function chooseTransition(candidates, from, chosen) {
+function chooseTransition2(candidates, from, chosen) {
   if (chosen !== void 0) {
-    if (lower(from) === lower(chosen)) {
+    if (lower2(from) === lower2(chosen)) {
       return { action: "skip", from, reason: `Already ${from}`, candidates };
     }
     const picked = candidates.find(
-      (candidate) => lower(candidate.to) === lower(chosen) || lower(candidate.name) === lower(chosen)
+      (candidate) => lower2(candidate.to) === lower2(chosen) || lower2(candidate.name) === lower2(chosen)
     );
     if (picked) return { action: "transition", from, ...picked, candidates };
     return { action: "not-advertised", from, chosen, candidates };
@@ -15121,10 +16474,10 @@ function chooseTransition(candidates, from, chosen) {
     candidates
   };
 }
-function planTransition(status, discover, options) {
+function planTransition2(status, discover, options) {
   const from = status.name;
   if (!options.wanted) return { action: "skip", from, reason: "--no-transition", candidates: [] };
-  if (lower(status.category) === CATEGORY_DONE) {
+  if (lower2(status.category) === CATEGORY_DONE2) {
     return { action: "skip", from, reason: `The item is already ${from}`, candidates: [] };
   }
   const discovered = discover();
@@ -15136,7 +16489,7 @@ function planTransition(status, discover, options) {
       candidates: []
     };
   }
-  return chooseTransition(transitionCandidates(discovered.payload), from, options.chosen);
+  return chooseTransition2(transitionCandidates(discovered.payload), from, options.chosen);
 }
 function itemOf(stored, site) {
   const siteUrl = typeof stored.site === "string" ? stored.site : null;
@@ -15176,7 +16529,7 @@ async function readItem2(key, options) {
     return { reasons: [{ code: error.code, detail: error.message }] };
   }
 }
-function checkArguments4(options) {
+function checkArguments5(options) {
   const key = options.key === void 0 ? void 0 : issueKeyArgument(options.key);
   const pairs = [
     ["--fields", options.fields, "--fields-file", options.fieldsFile],
@@ -15401,7 +16754,7 @@ function afterOf(stored) {
   };
 }
 async function publishChanges(input) {
-  const given = checkArguments4(input);
+  const given = checkArguments5(input);
   const git = input.git ?? runGit;
   const location = locateTree2(input.path, git);
   let key;
@@ -15593,7 +16946,7 @@ async function publishChanges(input) {
     source: sourceOf(required(bodies.pullRequest)),
     ...planOnly ? { description: reviewedPullRequestDescription() } : {}
   });
-  const alreadySettled = lower(item.status.category) === CATEGORY_DONE || REVIEW_LIKE.test(String(item.status.name ?? ""));
+  const alreadySettled = lower2(item.status.category) === CATEGORY_DONE2 || REVIEW_LIKE.test(String(item.status.name ?? ""));
   const transitionSkippedForNoPr = pullRequestPlan.action === "skip" && wantTransition && options.status === void 0 && !alreadySettled;
   const reviewedComment = bodies.comment === null ? null : bodyOf(
     bodies.comment,
@@ -15628,7 +16981,7 @@ async function publishChanges(input) {
       from: item.status.name,
       reason: "The pull request was skipped; there is no review to move to",
       candidates: []
-    } : planTransition(
+    } : planTransition2(
       item.status,
       () => runner(binary, ["jira", "workitem", "transition", "--id", key], { site: options.site }),
       { wanted: wantTransition, chosen: options.status }
@@ -15874,7 +17227,7 @@ async function applyPlan2(context) {
       after = null;
     }
     if (!moved.ok) return stop("transition", moved.detail ?? "twg exited non-zero");
-    const landed = after === null || lower(after.status.name) === lower(plan.transition.to);
+    const landed = after === null || lower2(after.status.name) === lower2(plan.transition.to);
     if (!landed) {
       caveats.push({
         code: "read-back-mismatch",
@@ -15983,8 +17336,16 @@ function registerChangesCommands(program2, options) {
     printVerdict(pass(GITHUB_PULL_REQUESTS_PREFERENCE_SCHEMA, { preference }));
   });
   changes.command("review-preference").description(
-    "Record whether to publish the writeback comment or the pull request description without reviewing it first: skip (and stop asking) or ask"
-  ).argument("<body>", '"comment" or "pull-request"').argument("<preference>", '"skip" to publish that body without a review, or "ask"').action(async (body, preference) => {
+    "Record whether to publish the writeback comment or the pull request description without reviewing it first: skip (and stop asking) or ask. With no arguments, print both stored choices and write nothing"
+  ).argument("[body]", '"comment" or "pull-request"').argument("[preference]", '"skip" to publish that body without a review, or "ask"').action(async (body, preference) => {
+    if (body === void 0 && preference === void 0) {
+      const preferences2 = await getReviewPreferences(stores.plugin);
+      printVerdict(pass(REVIEW_PREFERENCE_SCHEMA, { preferences: preferences2 }));
+      return;
+    }
+    if (body === void 0 || preference === void 0) {
+      throw new UsageError("give both <body> and <preference>, or neither to read the choices");
+    }
     if (!isReviewBody(body)) {
       throw new UsageError(`<body> must be "comment" or "pull-request", not "${body}"`);
     }
@@ -16405,839 +17766,282 @@ function registerCloudSitesRenderCommands(program2, options) {
 import { readFile } from "node:fs/promises";
 import { text as text4 } from "node:stream/consumers";
 
-// ../../plugins/jira/src/panels/work-item.ts
-function workItemRow(item) {
-  if (!item || typeof item !== "object" || Array.isArray(item)) {
-    throw new TypeError("Expected a work item as an object");
-  }
-  const key = sanitize(item.key);
-  if (key === "") {
-    throw new TypeError("Expected a work item carrying its key");
-  }
-  const summary = sanitize(item.summary);
-  const lines = [summary ? `${key}: ${summary}` : key];
-  const status = sanitize(item.status?.name);
-  if (status) {
-    lines.push(`\xB7 Status: ${status}`);
-  }
-  const assignee = sanitize(item.assignee?.displayName);
-  lines.push(`\xB7 Assignee: ${assignee || "none"}`);
-  const priority = sanitize(item.priority?.name);
-  if (priority) {
-    lines.push(`\xB7 Priority: ${priority}`);
-  }
-  const parent = sanitize(item.parent?.key);
-  if (parent) {
-    lines.push(`\xB7 Parent: ${parent}`);
-  }
-  const url = safeUrl(item.url) ?? browseUrl2(item.site, key);
-  if (url) {
-    lines.push(`\xB7 ${url}`);
-  }
-  return [sanitize(item.issuetype?.name) || "Work item", lines];
+// ../../plugins/jira/src/epic/codebase.ts
+var NO_CODEBASE = "none";
+function currentCodebase(cwd, git = runGit) {
+  const root = topLevel(cwd, git);
+  if (root === null) return NO_CODEBASE;
+  const origin = remoteUrl(root, "origin", git);
+  const remote = origin === null ? void 0 : parseRemote(origin);
+  return remote === void 0 ? root : repositoryName(remote);
 }
-function browseUrl2(site, key) {
-  const name = sanitize(site);
-  if (name === "") {
+function lazyCodebase(cwd, git = runGit) {
+  let resolved;
+  return () => resolved ??= currentCodebase(cwd, git);
+}
+
+// ../../plugins/jira/src/storage/epic.ts
+var EPIC_KEY_PREFIX = "jira/epics/";
+function encodeCodebases(value) {
+  return Object.fromEntries(
+    Object.entries(value).map(([codebase, touch2]) => [codebase, encodeTouch(touch2)])
+  );
+}
+function encodeTouch(value) {
+  return {
+    ...value.lastWrittenAt !== void 0 ? { lastWrittenAt: value.lastWrittenAt } : {},
+    ...value.lastAccessedAt !== void 0 ? { lastAccessedAt: value.lastAccessedAt } : {}
+  };
+}
+function encodeSubtask(value) {
+  return {
+    key: value.key,
+    summary: value.summary,
+    status: encodeStatus(value.status),
+    issuetype: encodeNamedEntity(value.issuetype),
+    ...encodeAssignee(value.assignee)
+  };
+}
+function encodeChild(value) {
+  return {
+    ...encodeSubtask(value),
+    ...value.blockedBy !== void 0 ? { blockedBy: [...value.blockedBy] } : {},
+    ...value.subtasks !== void 0 ? { subtasks: value.subtasks.map(encodeSubtask) } : {}
+  };
+}
+function encodeAssignee(value) {
+  if (value === void 0) return {};
+  return { assignee: value === null ? null : encodeJiraUser(value) };
+}
+function encodeStoredEpic(value) {
+  return {
+    cloudId: value.cloudId,
+    key: value.key,
+    summary: value.summary,
+    ...value.status !== void 0 ? { status: encodeStatus(value.status) } : {},
+    ...encodeAssignee(value.assignee),
+    ...value.url !== void 0 ? { url: value.url } : {},
+    ...encodeTouch(value),
+    codebases: encodeCodebases(value.codebases),
+    children: value.children.map(encodeChild),
+    ...value.childrenRefreshedAt !== void 0 ? { childrenRefreshedAt: value.childrenRefreshedAt } : {},
+    ...value.childrenTruncated !== void 0 ? { childrenTruncated: value.childrenTruncated } : {},
+    ...value.archived === true ? { archived: true } : {}
+  };
+}
+function decodeTouch(value) {
+  const lastWrittenAt = nullableStringProperty(value, "lastWrittenAt");
+  const lastAccessedAt = nullableStringProperty(value, "lastAccessedAt");
+  if (lastWrittenAt === INVALID || lastWrittenAt === null || lastAccessedAt === INVALID || lastAccessedAt === null) {
+    return INVALID;
+  }
+  return {
+    ...lastWrittenAt !== void 0 ? { lastWrittenAt } : {},
+    ...lastAccessedAt !== void 0 ? { lastAccessedAt } : {}
+  };
+}
+function decodeAssignee(value) {
+  if (value === void 0) return {};
+  const assignee = decodeNullableUser(value);
+  return assignee === void 0 ? INVALID : { assignee };
+}
+function decodeBlockedBy(value) {
+  if (value === void 0) return void 0;
+  if (!Array.isArray(value) || value.some((key) => typeof key !== "string")) return INVALID;
+  try {
+    return value.map((key) => asIssueKey(key));
+  } catch {
+    return INVALID;
+  }
+}
+function decodeSubtask(value) {
+  if (!isJsonObject(value)) return void 0;
+  const key = stringProperty(value, "key");
+  const summary = stringProperty(value, "summary");
+  const status = decodeStatus(value.status);
+  const issuetype = decodeNamedEntity(value.issuetype);
+  const assignee = decodeAssignee(value.assignee);
+  if (key === void 0 || summary === void 0 || status === void 0 || issuetype === void 0 || assignee === INVALID) {
     return void 0;
   }
-  const origin = safeUrl(name);
-  return origin !== void 0 ? safeUrl(new URL(`/browse/${key}`, origin).href) : safeUrl(`https://${name}.atlassian.net/browse/${key}`);
-}
-var HEADING_REGEX = /^\s*#{1,6}\s+/;
-var FENCE_REGEX = /^\s*```/;
-function detailLines(descriptionMarkdown) {
-  const lines = [];
-  for (const raw of String(descriptionMarkdown ?? "").split("\n")) {
-    if (FENCE_REGEX.test(raw)) {
-      continue;
-    }
-    const line = sanitize(raw.replace(HEADING_REGEX, ""));
-    lines.push(line === "" ? BLANK : line);
+  try {
+    return { key: asIssueKey(key), summary, status, issuetype, ...assignee };
+  } catch {
+    return void 0;
   }
-  const first = lines.findIndex((line) => line !== BLANK);
-  if (first === -1) {
-    return [];
-  }
-  let last = lines.length - 1;
-  while (lines[last] === BLANK) {
-    last -= 1;
-  }
-  return lines.slice(first, last + 1);
 }
-function workItemPanel(item, descriptionMarkdown, widths = tableWidths()) {
-  const rows = [workItemRow(item)];
-  const details = detailLines(descriptionMarkdown);
-  if (details.length > 0) {
-    rows.push(["Details", details]);
-  }
-  return fencedTable({ rows }, widths);
+function decodeSubtasks(value) {
+  if (value === void 0) return void 0;
+  if (!Array.isArray(value)) return INVALID;
+  return decodeArray(value, decodeSubtask) ?? INVALID;
 }
-
-// ../../plugins/jira/src/panels/claim.ts
-var STATES = {
-  pass: "\u2713",
-  warn: "!",
-  "n-a": "-",
-  stop: "\u2717"
-};
-function check(label, state, detail) {
-  return [`${STATES[state]} ${label}`, detail];
-}
-function plural(count2, one, many) {
-  return `${count2} ${count2 === 1 ? one : many}`;
-}
-function claimedItem(verdict) {
-  const { item, after } = verdict;
+function decodeChild(value) {
+  const base2 = decodeSubtask(value);
+  if (base2 === void 0 || !isJsonObject(value)) return void 0;
+  const blockedBy = decodeBlockedBy(value.blockedBy);
+  const subtasks = decodeSubtasks(value.subtasks);
+  if (blockedBy === INVALID || subtasks === INVALID) return void 0;
   return {
-    key: item.key,
-    summary: item.summary,
-    url: item.url,
-    site: verdict.site,
-    issuetype: { name: item.type },
-    priority: { name: item.priority },
-    parent: { key: item.parent },
-    status: { name: after?.status?.name ?? item.status?.name },
-    assignee: after?.assignee !== void 0 ? after.assignee : item.assignee
+    ...base2,
+    ...blockedBy !== void 0 ? { blockedBy } : {},
+    ...subtasks !== void 0 ? { subtasks } : {}
   };
 }
-function criteriaRow(criteria) {
-  if (!criteria) {
-    return check("Criteria", "warn", "No Acceptance criteria section");
+function decodeCodebases(value) {
+  if (value === void 0) return {};
+  if (!isJsonObject(value)) return void 0;
+  const codebases = {};
+  for (const [codebase, touch2] of Object.entries(value)) {
+    if (!isJsonObject(touch2)) return void 0;
+    const decoded = decodeTouch(touch2);
+    if (decoded === INVALID) return void 0;
+    codebases[codebase] = decoded;
   }
-  if (!criteria.count) {
-    return check("Criteria", "warn", "Acceptance criteria carries no bullet");
-  }
-  return check("Criteria", "pass", plural(criteria.count, "criterion", "criteria"));
+  return codebases;
 }
-function assigneeRow(verdict) {
-  const { applied, after, user, mode } = verdict;
-  const current = sanitize(verdict.assignee?.current);
-  switch (verdict.assignee?.action) {
-    case "none":
-      return check("Assignee", "pass", "Already yours");
-    case "skip":
-      return check("Assignee", "n-a", current ? `Left with ${current}` : "Left unassigned");
-    case "ask":
-      return check("Assignee", "warn", `Assigned to ${current}; take over, or start without`);
-    case "claim": {
-      if (mode === "plan" || !applied) {
-        return check(
-          "Assignee",
-          "n-a",
-          current ? `${current}'s, would be taken over` : "Unassigned, would be claimed for you"
-        );
-      }
-      const landed = Boolean(after?.assignee?.accountId) && after?.assignee?.accountId === user?.accountId;
-      if (!applied.ok && !landed) {
-        return check("Assignee", "stop", sanitize(applied.detail) || "The update failed");
-      }
-      return check(
-        "Assignee",
-        "pass",
-        current ? `Taken over from ${current}` : "Was unassigned, now yours"
-      );
-    }
-    default:
-      return check("Assignee", "n-a", "Not reached");
-  }
+function decodeChildren(value) {
+  if (value === void 0) return [];
+  if (!Array.isArray(value)) return void 0;
+  return decodeArray(value, decodeChild);
 }
-function statusRow(verdict) {
-  const { applied, after, mode } = verdict;
-  const transition = verdict.transition ?? {};
-  const from = sanitize(transition.from) || "unknown";
-  switch (transition.action) {
-    case "skip":
-      return check("Status", "n-a", `Already ${from}`);
-    case "unavailable":
-      return check("Status", "warn", `No transition into In Progress from ${from}`);
-    case "ask":
-      return check(
-        "Status",
-        "warn",
-        `${plural(transition.candidates?.length ?? 0, "transition", "transitions")} into In Progress; choose one`
-      );
-    case "not-advertised":
-      return check(
-        "Status",
-        "warn",
-        `"${sanitize(transition.chosen)}" is not a transition into In Progress from ${from}`
-      );
-    case "stop":
-      return check("Status", "stop", `${from}; a claim does not reopen a complete item`);
-    case "transition": {
-      const to = sanitize(transition.to);
-      if (mode === "plan" || !applied) {
-        return check("Status", "n-a", `${from} \u2192 ${to}, would be taken`);
-      }
-      const landed = (after?.status?.name ?? "").toLowerCase() === to.toLowerCase() && to !== "";
-      if (!applied.ok && !landed) {
-        return check("Status", "stop", sanitize(applied.detail) || "The update failed");
-      }
-      return check("Status", "pass", `${from} \u2192 ${to}`);
-    }
-    default:
-      return check("Status", "n-a", "Not reached");
+function decodeStoredEpic(value) {
+  if (!isJsonObject(value)) return void 0;
+  const cloudId = stringProperty(value, "cloudId");
+  const key = stringProperty(value, "key");
+  const summary = stringProperty(value, "summary");
+  const status = decodeStatus(value.status);
+  const assignee = decodeAssignee(value.assignee);
+  const url = nullableStringProperty(value, "url");
+  const touch2 = decodeTouch(value);
+  const codebases = decodeCodebases(value.codebases);
+  const children = decodeChildren(value.children);
+  const childrenRefreshedAt = nullableStringProperty(value, "childrenRefreshedAt");
+  if (cloudId === void 0 || key === void 0 || summary === void 0 || value.status !== void 0 && status === void 0 || assignee === INVALID || url === INVALID || touch2 === INVALID || codebases === void 0 || children === void 0 || childrenRefreshedAt === INVALID || childrenRefreshedAt === null || value.childrenTruncated !== void 0 && typeof value.childrenTruncated !== "boolean" || value.archived !== void 0 && typeof value.archived !== "boolean") {
+    return void 0;
+  }
+  try {
+    return {
+      cloudId: asCloudId(cloudId),
+      key: asIssueKey(key),
+      summary,
+      ...status !== void 0 ? { status } : {},
+      ...assignee,
+      ...url !== void 0 ? { url } : {},
+      ...touch2,
+      codebases,
+      children,
+      ...childrenRefreshedAt !== void 0 ? { childrenRefreshedAt } : {},
+      ...value.childrenTruncated !== void 0 ? { childrenTruncated: value.childrenTruncated } : {},
+      ...value.archived === true ? { archived: true } : {}
+    };
+  } catch {
+    return void 0;
   }
 }
-var FATES = {
-  kept: "kept on the branch",
-  stashed: "stashed",
-  worktree: "left in this tree"
+var storedEpicCodec = {
+  version: 1,
+  encode: encodeStoredEpic,
+  decode: decodeStoredEpic
 };
-function branchNote(plan, tree, after) {
-  if (plan.action === "reuse") {
-    return "reused";
-  }
-  if (plan.action === "checkout-existing") {
-    return "checked out";
-  }
-  const base2 = sanitize(plan.base) || sanitize(tree.branch) || "HEAD";
-  const elsewhere = after?.path && after.path !== tree.path ? `, in a worktree at ${after.path}` : "";
-  return `created off ${base2}${elsewhere}`;
-}
-function branchRows(branch) {
-  if (!branch || !branch.status) {
-    return [];
-  }
-  const reasons = branch.reasons ?? [];
-  const detail = reasons.map((reason) => sanitize(reason.detail)).filter(Boolean).join("; ");
-  const codes = new Set(reasons.map((reason) => reason.code));
-  const { tree, after } = branch;
-  const plan = branch.plan ?? {};
-  if (!tree) {
-    if (branch.status === "fail") {
-      return [check("Branch", "stop", detail || "The branch step failed")];
-    }
-    return after?.branch ? [check("Branch", "pass", sanitize(after.branch))] : [];
-  }
-  const rows = [
-    check(
-      "Repo",
-      "pass",
-      sanitize(tree.remote?.slug) || tree.path.split("/").filter(Boolean).at(-1) || tree.path
-    ),
-    check("Repo Writable", "pass", sanitize(tree.path))
-  ];
-  const staged = tree.staged ?? 0;
-  const untracked = tree.untracked ?? 0;
-  const modified = (tree.unstaged ?? 0) - untracked;
-  if (staged + modified + untracked === 0) {
-    rows.push(check("Working Tree", "pass", "Clean"));
-  } else if (staged + modified === 0) {
-    const files = plural(untracked, "untracked file", "untracked files");
-    rows.push(
-      check("Working Tree", "pass", codes.has("untracked-carried") ? `${files}, carried` : files)
+var jiraEpicKeys = {
+  /** Scoped by `cloudId` as well as the epic key, as `jiraKeys.workItem` is. */
+  epic(cloudId, key) {
+    return defineStorageKey(
+      `${EPIC_KEY_PREFIX}${encodeURIComponent(cloudId)}/${encodeURIComponent(key)}`,
+      storedEpicCodec
     );
-  } else {
-    const counts = `${staged} staged, ${modified} unstaged` + (untracked > 0 ? `, ${untracked} untracked` : "");
-    const fate = plan.changes ? FATES[plan.changes] : void 0;
-    if (codes.has("changes-pending")) {
-      rows.push(check("Working Tree", "warn", `${counts}; keep, stash, or use a worktree`));
-    } else {
-      rows.push(check("Working Tree", "pass", fate ? `${counts}, ${fate}` : counts));
+  }
+};
+function createJiraEpicStore(store) {
+  return {
+    getEpic: (cloudId, key) => store.get(jiraEpicKeys.epic(cloudId, key)),
+    setEpic: (value) => store.set(jiraEpicKeys.epic(value.cloudId, value.key), value),
+    deleteEpic: (cloudId, key) => store.delete(jiraEpicKeys.epic(cloudId, key)),
+    listEpics: async () => {
+      const names = (await store.keys()).filter((name) => name.startsWith(EPIC_KEY_PREFIX));
+      const epics = await Promise.all(
+        names.map((name) => store.get(defineStorageKey(name, storedEpicCodec)))
+      );
+      return epics.filter((epic) => epic !== void 0);
     }
-  }
-  const name = sanitize(after?.branch) || sanitize(plan.branch) || "unknown";
-  if (branch.status === "fail") {
-    rows.push(check("Branch", "stop", detail || "The branch step failed"));
-  } else if (codes.has("base-needed")) {
-    rows.push(check("Branch", "warn", `${name}, awaiting your choice of base`));
-  } else if (codes.has("changes-pending")) {
-    const verb = plan.action === "create" ? "created" : "checked out";
-    rows.push(check("Branch", "warn", `${name}, not yet ${verb}`));
-  } else if (!after) {
-    rows.push(check("Branch", "pass", `${name}, would be ${branchNote(plan, tree, null)}`));
-  } else if (codes.has("base-stale") || codes.has("lfs-checkout-failed")) {
-    const caveats = [
-      ...codes.has("base-stale") ? [`${plan.base ?? "the base"} not refreshed`] : [],
-      ...codes.has("lfs-checkout-failed") ? ["LFS checkout failed"] : []
-    ];
-    rows.push(
-      check("Branch", "warn", `${name}, ${branchNote(plan, tree, after)}; ${caveats.join("; ")}`)
-    );
-  } else {
-    rows.push(check("Branch", "pass", `${name}, ${branchNote(plan, tree, after)}`));
-  }
-  return rows;
-}
-function claimRows(verdict) {
-  if (!verdict || typeof verdict !== "object" || Array.isArray(verdict)) {
-    throw new TypeError("Expected a claim verdict");
-  }
-  if (!verdict.item?.key) {
-    throw new TypeError("Expected a claim verdict carrying its item");
-  }
-  return [
-    workItemRow(claimedItem(verdict)),
-    criteriaRow(verdict.criteria),
-    assigneeRow(verdict),
-    statusRow(verdict),
-    ...branchRows(verdict.branch)
-  ];
-}
-function claimTable(verdict, widths = tableWidths()) {
-  return fencedTable({ rows: claimRows(verdict) }, widths);
+  };
 }
 
-// ../../plugins/jira/src/storage/user.ts
-var currentUserCodec = {
+// ../../plugins/jira/src/storage/recent-work.ts
+var RECENT_KEY_PREFIX = "jira/recent-work/";
+function encodeItem(value) {
+  const row = encodeChild(value);
+  return {
+    ...isJsonObject(row) ? row : {},
+    ...encodeTouch(value),
+    codebases: encodeCodebases(value.codebases),
+    ...value.archived === true ? { archived: true } : {}
+  };
+}
+function decodeItem(value) {
+  if (!isJsonObject(value)) return void 0;
+  const row = decodeChild(value);
+  const touch2 = decodeTouch(value);
+  const codebases = decodeCodebases(value.codebases);
+  if (row === void 0 || touch2 === INVALID || codebases === void 0 || value.archived !== void 0 && typeof value.archived !== "boolean") {
+    return void 0;
+  }
+  return { ...row, ...touch2, codebases, ...value.archived === true ? { archived: true } : {} };
+}
+var projectGroupCodec = {
   version: 1,
-  encode: (value) => ({ accountId: value.accountId, displayName: value.displayName }),
+  encode: (value) => ({
+    cloudId: value.cloudId,
+    projectKey: value.projectKey,
+    ...value.name !== void 0 ? { name: value.name } : {},
+    codebases: encodeCodebases(value.codebases),
+    items: value.items.map(encodeItem)
+  }),
   decode: (value) => {
     if (!isJsonObject(value)) return void 0;
-    const accountId = stringProperty(value, "accountId");
-    if (accountId === void 0) return void 0;
-    const displayName = value.displayName === null ? null : stringProperty(value, "displayName");
-    if (value.displayName !== void 0 && value.displayName !== null && displayName === void 0) {
+    const cloudId = stringProperty(value, "cloudId");
+    const projectKey = stringProperty(value, "projectKey");
+    const codebases = decodeCodebases(value.codebases);
+    if (cloudId === void 0 || projectKey === void 0 || codebases === void 0 || value.name !== void 0 && typeof value.name !== "string" || !Array.isArray(value.items)) {
       return void 0;
     }
-    return { accountId, displayName: displayName ?? null };
-  }
-};
-var currentUserKey = defineStorageKey(
-  "jira/current-user",
-  currentUserCodec
-);
-function getCurrentUser(store) {
-  return store.get(currentUserKey);
-}
-function setCurrentUser(store, value) {
-  return store.set(currentUserKey, value);
-}
-
-// ../../plugins/jira/src/work-item/claim.ts
-var CLAIM_WORK_ITEM_SCHEMA = "jira-workflows/claim-work-item/v1";
-var TARGET_STATUS = "In Progress";
-var CATEGORY_NEW = "new";
-var CATEGORY_IN_PROGRESS = "indeterminate";
-var CATEGORY_DONE2 = "done";
-var DECISION_CODES = /* @__PURE__ */ new Set([
-  "assignee-takeover",
-  "transition-ambiguous",
-  "status-not-advertised"
-]);
-var lower2 = (value) => String(value ?? "").trim().toLowerCase();
-function checkArguments5(options) {
-  const key = issueKeyArgument(options.key);
-  if (options.takeOver && options.skipAssignee) {
-    throw new UsageError("--take-over and --skip-assignee exclude each other");
-  }
-  for (const field of options.fields ?? []) {
-    if (!field.includes("=")) {
-      throw new UsageError(`--field needs a <key>=<value>: ${field}`);
-    }
-  }
-  return key;
-}
-function planAssignee(current, user) {
-  if (current === null) {
-    return { action: "claim", current: null };
-  }
-  if (current.accountId !== void 0 && current.accountId === user.accountId) {
-    return { action: "none", current: current.displayName };
-  }
-  return { action: "ask", current: current.displayName };
-}
-function resolveAssignee(planned, {
-  takeOver = false,
-  skipAssignee = false
-} = {}) {
-  if (planned.action === "none") return planned;
-  if (skipAssignee) return { ...planned, action: "skip" };
-  if (planned.action === "ask" && takeOver) return { ...planned, action: "claim" };
-  return planned;
-}
-function chooseTransition2(transitions, chosen) {
-  const categorised = transitions.some((t) => t.category !== null && t.category !== void 0);
-  const inProgressKeyed = categorised ? transitions.filter((t) => t.category === CATEGORY_IN_PROGRESS) : transitions.filter((t) => lower2(t.to) === lower2(TARGET_STATUS));
-  const summary = (t) => ({
-    id: t.id,
-    name: t.name,
-    to: t.to
-  });
-  if (chosen !== void 0) {
-    const picked = inProgressKeyed.find(
-      (t) => lower2(t.to) === lower2(chosen) || lower2(t.name) === lower2(chosen)
-    );
-    if (picked) {
+    const items = value.items.map(decodeItem);
+    if (items.some((item) => item === void 0)) return void 0;
+    try {
       return {
-        action: "transition",
-        from: null,
-        ...summary(picked),
-        candidates: inProgressKeyed.map(summary)
+        cloudId: asCloudId(cloudId),
+        projectKey,
+        ...typeof value.name === "string" ? { name: value.name } : {},
+        codebases,
+        items
       };
+    } catch {
+      return void 0;
     }
-    return {
-      action: "not-advertised",
-      from: null,
-      chosen,
-      candidates: inProgressKeyed.map(summary)
-    };
   }
-  const named = inProgressKeyed.find((t) => lower2(t.to) === lower2(TARGET_STATUS));
-  if (named) {
-    return {
-      action: "transition",
-      from: null,
-      ...summary(named),
-      candidates: inProgressKeyed.map(summary)
-    };
-  }
-  if (inProgressKeyed.length === 1) {
-    return {
-      action: "transition",
-      from: null,
-      ...summary(inProgressKeyed[0]),
-      candidates: inProgressKeyed.map(summary)
-    };
-  }
-  if (inProgressKeyed.length > 1) {
-    return { action: "ask", from: null, candidates: inProgressKeyed.map(summary) };
-  }
-  return { action: "unavailable", from: null, candidates: transitions.map(summary) };
-}
-function decodeTransition(value) {
-  if (!isJsonObject(value)) return void 0;
-  const id = typeof value.id === "string" ? value.id : typeof value.id === "number" ? String(value.id) : void 0;
-  const to = isJsonObject(value.to) ? value.to : void 0;
-  const status = isJsonObject(value.status) ? value.status : void 0;
-  const toName = to && typeof to.name === "string" ? to.name : void 0;
-  const flatToName = typeof value.toName === "string" ? value.toName : void 0;
-  const statusName = status && typeof status.name === "string" ? status.name : void 0;
-  const actionName = typeof value.name === "string" ? value.name : void 0;
-  const targetName = toName ?? flatToName ?? statusName ?? actionName;
-  if (id === void 0 || targetName === void 0) return void 0;
-  const categoryOf = (holder) => {
-    const category = holder?.statusCategory;
-    return category !== void 0 && isJsonObject(category) && typeof category.key === "string" ? category.key : null;
-  };
-  return {
-    id,
-    name: actionName ?? targetName,
-    to: targetName,
-    category: categoryOf(to) ?? categoryOf(status) ?? categoryKey(value.category)
-  };
-}
-var CATEGORY_KEYS = {
-  "to do": CATEGORY_NEW,
-  [CATEGORY_NEW]: CATEGORY_NEW,
-  "in progress": CATEGORY_IN_PROGRESS,
-  [CATEGORY_IN_PROGRESS]: CATEGORY_IN_PROGRESS,
-  done: CATEGORY_DONE2
 };
-function categoryKey(value) {
-  return typeof value === "string" ? CATEGORY_KEYS[lower2(value)] ?? null : null;
-}
-function extractTransitions(payload) {
-  const raw = extractArrayPayload(payload, ["transitions"]) ?? [];
-  return raw.flatMap((item) => {
-    const decoded = decodeTransition(item);
-    return decoded === void 0 ? [] : [decoded];
-  });
-}
-function planTransition2(status, discover, chosen) {
-  const { category, name: from } = status;
-  if (category === CATEGORY_DONE2) {
-    return { action: "stop", from, reason: "The item is complete" };
+var jiraRecentWorkKeys = {
+  /** Scoped by `cloudId` as well as the project key, as `jiraEpicKeys.epic` is. */
+  group(cloudId, projectKey) {
+    return defineStorageKey(
+      `${RECENT_KEY_PREFIX}${encodeURIComponent(cloudId)}/${encodeURIComponent(projectKey)}`,
+      projectGroupCodec
+    );
   }
-  if (category === CATEGORY_IN_PROGRESS) {
-    return { action: "skip", from, reason: "Already in progress" };
-  }
-  if (category !== null && category !== CATEGORY_NEW) {
-    return { action: "stop", from, reason: `Unrecognised status category "${category}"` };
-  }
-  const result = discover();
-  if (!result.ok) {
-    return { action: "unavailable", from, reason: result.detail, candidates: [] };
-  }
-  return { ...chooseTransition2(extractTransitions(result.payload), chosen), from };
-}
-function buildCommand2(key, site, assignee, transition, fields = []) {
-  const args = ["jira", "workitem", "update", "--id", key];
-  if (assignee.action === "claim") args.push("--assignee", "me");
-  if (transition.action === "transition" && transition.to !== void 0)
-    args.push("--status", transition.to);
-  if (args.length === 5) return void 0;
-  for (const field of fields) args.push("--field", field);
-  const displayed = site ? [...args, "--site", site] : args;
-  const shown = displayed.map((a) => /[\s"]/.test(a) ? JSON.stringify(a) : a).join(" ");
-  return { args, display: `twg ${shown}` };
-}
-var CRITERIA_HEADING_RE = /^##\s+(?:acceptance\s+criteria|done\s+when)\s*$/i;
-var LEVEL_TWO_HEADING_RE = /^##\s/;
-var TOP_LEVEL_LIST_ITEM_RE = /^(?:[-*+]|\d+[.)])\s+\S/;
-function countCriteria(description) {
-  if (typeof description !== "string") return null;
-  let inSection = false;
-  let found = false;
-  let count2 = 0;
-  for (const line of description.split(/\r?\n/)) {
-    if (CRITERIA_HEADING_RE.test(line)) {
-      if (found) break;
-      found = true;
-      inSection = true;
-    } else if (LEVEL_TWO_HEADING_RE.test(line)) {
-      inSection = false;
-    } else if (inSection && TOP_LEVEL_LIST_ITEM_RE.test(line)) {
-      count2 += 1;
-    }
-  }
-  return found ? { count: count2 } : null;
-}
-function readRaw(runner, binary, key, fields, site) {
-  const result = runner(
-    binary,
-    ["jira", "workitem", "get", key, "--fields", fields],
-    site !== void 0 ? { site } : {}
-  );
-  if (!result.ok || result.payload === void 0) return void 0;
-  const unwrapped = unwrapWorkItemEnvelope(result.payload);
-  if (unwrapped === void 0) return void 0;
-  const record = hoistFields(unwrapped);
-  const rawAssignee = record.assignee;
-  const assignee = rawAssignee === null ? null : isJsonObject(rawAssignee) ? {
-    accountId: typeof rawAssignee.accountId === "string" ? rawAssignee.accountId : void 0,
-    displayName: typeof rawAssignee.displayName === "string" ? rawAssignee.displayName : null
-  } : void 0;
-  const rawStatus = record.status;
-  const status = isJsonObject(rawStatus) ? {
-    name: typeof rawStatus.name === "string" ? rawStatus.name : null,
-    category: isJsonObject(rawStatus.statusCategory) && typeof rawStatus.statusCategory.key === "string" ? rawStatus.statusCategory.key : null
-  } : void 0;
-  return { assignee, status };
-}
-function decodeCurrentUser(result) {
-  if (!result.ok || result.payload === void 0 || !isJsonObject(result.payload)) return void 0;
-  const data = result.payload.data;
-  const record = isJsonObject(data) && isJsonObject(data.user) ? data.user : data;
-  if (!isJsonObject(record)) return void 0;
-  const accountId = typeof record.accountId === "string" ? record.accountId : void 0;
-  if (accountId === void 0) return void 0;
-  const displayName = typeof record.name === "string" ? record.name : typeof record.displayName === "string" ? record.displayName : null;
-  return { accountId, displayName };
-}
-async function currentUser(runner, binary, memory) {
-  const cached = await getCurrentUser(memory.plugin);
-  if (cached !== void 0) return cached;
-  const user = decodeCurrentUser(runner(binary, ["user", "get"]));
-  if (user?.accountId !== void 0) {
-    await setCurrentUser(memory.plugin, {
-      accountId: user.accountId,
-      displayName: user.displayName
-    });
-  }
-  return user;
-}
-function emptyExtra2(key, site, mode) {
+};
+function createJiraRecentWorkStore(store) {
   return {
-    key,
-    site,
-    mode,
-    item: null,
-    criteria: null,
-    user: null,
-    assignee: null,
-    transition: null,
-    command: null,
-    applied: null,
-    after: null
-  };
-}
-function mapFetchError(key, siteOption, mode, error) {
-  if (!(error instanceof FetchWorkItemError)) throw error;
-  const common = emptyExtra2(key, siteOption ?? null, mode);
-  if (error.code === "wrong-site" || error.code === "cloud-id-unresolved") {
-    return fail(CLAIM_WORK_ITEM_SCHEMA, [{ code: "site-unresolved", detail: error.message }], {
-      ...common,
-      sites: error.sites
-    });
-  }
-  return fail(
-    CLAIM_WORK_ITEM_SCHEMA,
-    [{ code: error.code, detail: error.message }],
-    common
-  );
-}
-async function claim(input) {
-  const key = checkArguments5(input);
-  const options = {
-    ...input,
-    site: input.site ?? await resolveIndexedSite(input.memory, key)
-  };
-  const env = options.env ?? process.env;
-  const runner = options.runner ?? runTwgJson;
-  const planOnly = options.planOnly ?? false;
-  const mode = planOnly ? "plan" : "apply";
-  const fields = options.fields ?? [];
-  let binary;
-  try {
-    binary = resolveTwgBinary(env);
-  } catch (error) {
-    if (error instanceof TwgNotFoundError) {
-      return fail(
-        CLAIM_WORK_ITEM_SCHEMA,
-        [{ code: "twg-not-found", detail: error.message }],
-        emptyExtra2(key, options.site ?? null, mode)
+    getGroup: (cloudId, projectKey) => store.get(jiraRecentWorkKeys.group(cloudId, projectKey)),
+    setGroup: (value) => store.set(jiraRecentWorkKeys.group(value.cloudId, value.projectKey), value),
+    deleteGroup: (cloudId, projectKey) => store.delete(jiraRecentWorkKeys.group(cloudId, projectKey)),
+    listGroups: async () => {
+      const names = (await store.keys()).filter((name) => name.startsWith(RECENT_KEY_PREFIX));
+      const groups = await Promise.all(
+        names.map((name) => store.get(defineStorageKey(name, projectGroupCodec)))
       );
+      return groups.filter((group) => group !== void 0);
     }
-    throw error;
-  }
-  let fetched;
-  try {
-    fetched = await fetchWorkItem({
-      key,
-      site: options.site,
-      scope: "session",
-      linkSource: "claim",
-      memory: options.memory,
-      runner,
-      env
-    });
-  } catch (error) {
-    return mapFetchError(key, options.site, mode, error);
-  }
-  const user = await currentUser(runner, binary, options.memory);
-  if (user === void 0) {
-    return fail(
-      CLAIM_WORK_ITEM_SCHEMA,
-      [{ code: "user-unresolved", detail: "twg user get returned no accountId" }],
-      emptyExtra2(key, options.site ?? null, mode)
-    );
-  }
-  const effectiveSite = options.site ?? (typeof fetched.site === "string" ? fetched.site : null);
-  const rawAssignee = readRaw(runner, binary, key, "assignee", options.site)?.assignee;
-  const current = fetched.assignee === null || fetched.assignee === void 0 ? null : rawAssignee === void 0 ? { accountId: void 0, displayName: fetched.assignee.displayName } : rawAssignee;
-  const assignee = resolveAssignee(planAssignee(current, user), {
-    takeOver: options.takeOver,
-    skipAssignee: options.skipAssignee
-  });
-  const transition = planTransition2(
-    { name: fetched.status?.name ?? null, category: fetched.status?.statusCategory?.key ?? null },
-    () => runner(
-      binary,
-      ["jira", "workitem", "transition", "--id", key],
-      options.site !== void 0 ? { site: options.site } : {}
-    ),
-    options.status
-  );
-  const item = {
-    key: fetched.key,
-    summary: fetched.summary ?? null,
-    url: typeof fetched.site === "string" ? browseUrl(fetched.site, fetched.key) : null,
-    type: fetched.issuetype?.name ?? null,
-    priority: fetched.priority?.name ?? null,
-    parent: fetched.parent?.key ?? null,
-    status: {
-      name: fetched.status?.name ?? null,
-      category: fetched.status?.statusCategory?.key ?? null
-    },
-    assignee: current
   };
-  const command = buildCommand2(key, options.site, assignee, transition, fields);
-  const common = {
-    key,
-    site: effectiveSite,
-    mode,
-    item,
-    criteria: countCriteria(fetched.description),
-    user,
-    assignee,
-    transition,
-    command: command?.display ?? null,
-    applied: null,
-    after: null
-  };
-  if (transition.action === "stop") {
-    return fail(
-      CLAIM_WORK_ITEM_SCHEMA,
-      [
-        {
-          code: "item-complete",
-          detail: `${key} is ${transition.from}; a claim does not reopen a complete item`
-        }
-      ],
-      {
-        ...common,
-        command: null
-      }
-    );
-  }
-  const decisions = [];
-  if (assignee.action === "ask") {
-    decisions.push({
-      code: "assignee-takeover",
-      detail: `${key} is assigned to ${assignee.current}; re-run with --take-over or --skip-assignee`
-    });
-  }
-  if (transition.action === "ask") {
-    decisions.push({
-      code: "transition-ambiguous",
-      detail: `${key} has ${transition.candidates?.length ?? 0} transitions into In Progress; re-run with --status <name>`
-    });
-  }
-  if (transition.action === "not-advertised") {
-    decisions.push({
-      code: "status-not-advertised",
-      detail: `"${transition.chosen}" is not a transition into In Progress from ${transition.from}`
-    });
-  }
-  if (decisions.length > 0) {
-    return warn(CLAIM_WORK_ITEM_SCHEMA, decisions, common);
-  }
-  const reasons = [];
-  if (transition.action === "unavailable") {
-    reasons.push({
-      code: "transition-unavailable",
-      detail: transition.reason ?? `${key} has no transition into In Progress from ${transition.from}`
-    });
-  }
-  if (assignee.action === "none" && transition.action === "skip") {
-    reasons.push({
-      code: "already-claimed",
-      detail: `${key} is already yours and already ${transition.from}`
-    });
-  }
-  if (assignee.action === "skip" && transition.action === "skip") {
-    reasons.push({
-      code: "nothing-to-do",
-      detail: `${key} is already ${transition.from} and the assignee was left alone`
-    });
-  }
-  if (!command || planOnly) {
-    if (reasons.some((r) => r.code === "transition-unavailable")) {
-      return warn(CLAIM_WORK_ITEM_SCHEMA, reasons, common);
-    }
-    return pass(CLAIM_WORK_ITEM_SCHEMA, common, { reasons });
-  }
-  const written = runner(
-    binary,
-    command.args,
-    options.site !== void 0 ? { site: options.site } : {}
-  );
-  const applied = {
-    ok: written.ok,
-    ...written.ok ? {} : { detail: written.detail }
-  };
-  const readBack = readRaw(runner, binary, key, "assignee,status", options.site);
-  const after = readBack ? { assignee: readBack.assignee ?? null, status: readBack.status ?? null } : null;
-  if (after !== null) {
-    await refreshClaimCache(options.memory, fetched, after);
-  }
-  if (!written.ok) {
-    return fail(
-      CLAIM_WORK_ITEM_SCHEMA,
-      [...reasons, { code: "write-failed", detail: written.detail ?? "twg exited non-zero" }],
-      {
-        ...common,
-        applied,
-        after
-      }
-    );
-  }
-  const landed = after !== null && (assignee.action !== "claim" || after.assignee?.accountId === user.accountId) && (transition.action !== "transition" || lower2(after.status?.name) === lower2(transition.to));
-  if (after !== null && !landed) {
-    reasons.push({
-      code: "read-back-mismatch",
-      detail: `The update returned ok but ${key} reads back as ${after.status?.name ?? "unknown"}, assigned to ${after.assignee?.displayName ?? "nobody"}`
-    });
-  }
-  if (reasons.some((r) => r.code === "transition-unavailable" || r.code === "read-back-mismatch")) {
-    return warn(CLAIM_WORK_ITEM_SCHEMA, reasons, { ...common, applied, after });
-  }
-  return pass(CLAIM_WORK_ITEM_SCHEMA, { ...common, applied, after }, { reasons });
-}
-async function refreshClaimCache(memory, fetched, after) {
-  try {
-    const status = after.status;
-    await memory.patchWorkItem("session", {
-      cloudId: fetched.cloudId,
-      key: fetched.key,
-      assignee: after.assignee === null ? null : { displayName: after.assignee.displayName ?? fetched.assignee?.displayName ?? "" },
-      // `patchWorkItem` replaces `status` whole, not field by field, so a
-      // read-back that answered no category must still carry the item's
-      // existing one forward rather than dropping it from the cache.
-      ...status !== null ? {
-        status: {
-          name: status.name ?? fetched.status.name,
-          ...status.category !== null ? { statusCategory: { key: status.category } } : fetched.status.statusCategory !== void 0 ? { statusCategory: fetched.status.statusCategory } : {}
-        }
-      } : {}
-    });
-  } catch {
-  }
-}
-async function withBranch(result, options) {
-  const path8 = options.path ?? process.cwd();
-  const git = options.git ?? runGit;
-  const preparer = options.preparer ?? prepareBranch;
-  const key = asIssueKey(options.key);
-  const root = topLevel(path8, git);
-  if (root === null) {
-    return {
-      ...result,
-      branch: { action: "skipped", detail: `${path8} is not inside a git working tree` }
-    };
-  }
-  const branch = currentBranch(root, git);
-  const named = defaultBranch(root, git);
-  if (branch === null || named === null || branch !== named) {
-    return {
-      ...result,
-      branch: {
-        action: "skipped",
-        branch: branch ?? null,
-        defaultBranch: named,
-        carriesKey: carriesKey(branch ?? "", key),
-        detail: `${root} is on ${branch ?? "a detached HEAD"}, not ${named ?? "a default branch it can name"}`
-      }
-    };
-  }
-  const item = result.item;
-  const branchVerdict = await preparer({
-    key,
-    path: root,
-    site: result.site ?? options.site,
-    planOnly: options.planOnly ?? false,
-    fetch: options.fetch,
-    // The plugin scope holds the repository's fetch preference; the item is
-    // given, so nothing is read into the session scope here.
-    memory: options.memory,
-    ...item ? {
-      item: {
-        key: item.key,
-        summary: item.summary,
-        site: result.site ?? options.site ?? void 0
-      }
-    } : {},
-    git,
-    env: options.env
-  });
-  let next = { ...result, branch: branchVerdict };
-  if (branchVerdict.status === "fail") {
-    const detail = branchVerdict.reasons.map((r) => r.detail).filter(Boolean).join("; ") || "prepare-branch failed";
-    next = withReason(next, { code: "branch-failed", detail }, "warn");
-  } else if (branchVerdict.status === "warn" && branchVerdict.reasons.some((r) => r.code === "base-needed" || r.code === "changes-pending")) {
-    const detail = branchVerdict.reasons.map((r) => r.detail).filter(Boolean).join("; ");
-    next = withReason(next, { code: "branch-pending", detail }, "warn");
-  }
-  return next;
-}
-async function claimAndBranch(options) {
-  const result = await claim(options);
-  if (!options.prepareBranch) return result;
-  if (result.status === "fail" || result.reasons.some((r) => DECISION_CODES.has(r.code))) {
-    return { ...result, branch: { action: "skipped", detail: "The claim did not land" } };
-  }
-  return withBranch(result, options);
-}
-function withPanels(result) {
-  const { item } = result;
-  if (item === null) return { ...result, panels: "" };
-  return { ...result, panels: claimTable({ ...result, item }) };
-}
-async function claimWorkItem(options) {
-  return withPanels(await claimAndBranch(options));
 }
 
 // ../../plugins/jira/src/work-item/transition.ts
@@ -17284,7 +18088,7 @@ async function transitionWorkItemUnchecked(options) {
   }
   const discovery = runner(binary, ["jira", "workitem", "transition", "--id", issueKey], { site });
   if (!discovery.ok) {
-    if (isAuthFailure2(discovery.detail)) {
+    if (isAuthFailure3(discovery.detail)) {
       throw notAuthenticated3(discovery.detail);
     }
     throw new TransitionWorkItemError(
@@ -17308,7 +18112,7 @@ async function transitionWorkItemUnchecked(options) {
     { site, timeoutMs: MIN_TRANSITION_TIMEOUT_MS2 }
   );
   if (!write.ok) {
-    if (isAuthFailure2(write.detail)) {
+    if (isAuthFailure3(write.detail)) {
       throw notAuthenticated3(write.detail);
     }
     throw new TransitionWorkItemError(
@@ -17318,7 +18122,7 @@ async function transitionWorkItemUnchecked(options) {
   }
   const statusCategory = match.category !== void 0 ? { key: match.category } : record.status.statusCategory;
   try {
-    await memory.patchWorkItem(scope, {
+    const patched = await memory.patchWorkItem(scope, {
       cloudId,
       key: issueKey,
       status: {
@@ -17326,6 +18130,7 @@ async function transitionWorkItemUnchecked(options) {
         ...statusCategory !== void 0 ? { statusCategory } : {}
       }
     });
+    await recordTouchWith(options.epicRecorder, patched, "write");
   } catch (error) {
     console.error(
       `${issueKey} was transitioned to "${match.name}", but the stored record could not be updated: ${error instanceof Error ? error.message : String(error)}`
@@ -17384,7 +18189,7 @@ function notAuthenticated3(detail) {
     notAuthenticatedDetail(detail, "written")
   );
 }
-function isAuthFailure2(detail) {
+function isAuthFailure3(detail) {
   const text6 = String(detail ?? "").toLowerCase();
   return text6.includes("auth") || text6.includes("401") || text6.includes("log in") || text6.includes("login") || text6.includes("expired") || text6.includes("revoked");
 }
@@ -17819,6 +18624,24 @@ async function readOrPrintFailure(options) {
     throw error;
   }
 }
+function epicRecorderFor(stores) {
+  const memory = createJiraMemory(stores);
+  return {
+    epics: createJiraEpicStore(stores.plugin),
+    recent: createJiraRecentWorkStore(stores.plugin),
+    codebase: lazyCodebase(process.cwd()),
+    // The one read a sub-task needs to find its epic. Into the plugin scope, so
+    // it never links the session to the story; a failed read records nothing
+    // rather than failing the command that was reading the sub-task.
+    readParent: async (key) => {
+      try {
+        return await fetchWorkItem({ key, scope: "plugin", memory, internal: true });
+      } catch {
+        return void 0;
+      }
+    }
+  };
+}
 function registerWorkItemCommands(program2, options) {
   const stores = createClaudeStores(options);
   const memory = createJiraMemory(stores);
@@ -17846,7 +18669,8 @@ function registerWorkItemCommands(program2, options) {
       site: opts.site,
       scope,
       refresh: opts.refresh,
-      memory
+      memory,
+      epicRecorder: epicRecorderFor(stores)
     });
     if (read === void 0) return;
     const item = opts.full || opts.fields !== void 0 ? projectRecord(read.record, WORK_ITEM_FIELDS, parseFieldsOption(opts.fields), false) : agentView(read.record);
@@ -17890,6 +18714,9 @@ function registerWorkItemCommands(program2, options) {
     "--description-format <format>",
     `the description\u2019s input format: ${DESCRIPTION_FORMATS.join(", ")}; twg defaults to html`
   ).option("--parent <issue-key>", "the parent item\u2019s key").option(
+    "--for-pull-request <url>",
+    "claim this new item for review of an existing open pull request"
+  ).option(
     "--field <id=value>",
     "an extra field by customfield_* id or name, passed through to the create unchanged; repeatable",
     (value, previous = []) => [...previous, value]
@@ -17908,9 +18735,11 @@ function registerWorkItemCommands(program2, options) {
       description,
       descriptionFormat: opts.descriptionFormat,
       parent: opts.parent,
+      forPullRequest: opts.forPullRequest,
       fields: opts.field,
       site: opts.site,
-      memory
+      memory,
+      epicRecorder: epicRecorderFor(stores)
     });
     printVerdict(
       verdict.linked ? await withSessionLinkResult(verdict, options, stores) : verdict
@@ -17946,7 +18775,8 @@ function registerWorkItemCommands(program2, options) {
       site: opts.site,
       scope: opts.scope,
       to: opts.to,
-      memory
+      memory,
+      epicRecorder: epicRecorderFor(stores)
     });
     console.log(JSON.stringify(outcome, null, 2));
     if (outcome.transition !== null) noteAdoption({ aiResultAction: "workItemTransitioned" });
@@ -18056,17 +18886,14 @@ function registerWorkItemClaimCommands(program2, options) {
   const memory = createJiraMemory(stores);
   const workItem = program2.commands.find((command) => command.name() === "work-item") ?? program2.command("work-item").description("Read and write a Jira work item's stored record");
   workItem.command("claim").description(
-    "Assign the item to the caller and transition it to In Progress, deciding every step from a live read; prints a verdict"
+    "Assign the item to the caller and start it, or move it into review under --for-review; prints a verdict"
   ).requiredOption("--key <issue-key>", "Jira issue key").option(
     "--site <site>",
     "Jira site; omit for the project's indexed site, then twg's default site"
   ).option(
     "--path <dir>",
     "the working tree --prepare-branch reads; defaults to the current directory"
-  ).option("--plan-only", "plan and report; write nothing").option("--take-over", "assign an item that is currently someone else\u2019s").option("--skip-assignee", "start the item without changing its assignee").option(
-    "--status <name>",
-    "the In Progress-category status to land in, where the discovery advertises more than one"
-  ).option(
+  ).option("--plan-only", "plan and report; write nothing").option("--take-over", "assign an item that is currently someone else\u2019s").option("--skip-assignee", "start the item without changing its assignee").option("--for-review", "claim the item into a review status rather than In Progress").option("--status <name>", "the chosen target where transition discovery needs a decision").option(
     "--field <customfield_id=value>",
     "a transition-screen field, passed through to the update unchanged; repeatable",
     (value, previous = []) => [...previous, value]
@@ -18084,14 +18911,695 @@ function registerWorkItemClaimCommands(program2, options) {
       planOnly: opts.planOnly,
       takeOver: opts.takeOver,
       skipAssignee: opts.skipAssignee,
+      forReview: opts.forReview,
       status: opts.status,
       fields: opts.field,
       prepareBranch: opts.prepareBranch,
       fetch: fetchFlag(command),
-      memory
+      memory,
+      epicRecorder: epicRecorderFor(stores)
     });
     printVerdict(await withSessionLinkResult(verdict, options, stores));
     if (verdict.applied?.ok === true) noteAdoption({ aiResultAction: "workItemClaimed" });
+  });
+  return program2;
+}
+
+// ../../plugins/jira/src/epic/children.ts
+var CHILD_FIELDS = "summary,status,issuetype,assignee,issuelinks,subtasks";
+var DEFAULT_CHILDREN_PAGE_SIZE = 100;
+var DEFAULT_CHILDREN_CAP = 500;
+function fetchEpicChildren(options) {
+  const { key, site } = options;
+  const runner = options.runner ?? runTwgJson;
+  const pageSize = options.pageSize ?? DEFAULT_CHILDREN_PAGE_SIZE;
+  const cap = options.cap ?? DEFAULT_CHILDREN_CAP;
+  try {
+    const binary = resolveTwgBinary(options.env ?? process.env);
+    const rows = [];
+    let cursor;
+    for (; ; ) {
+      const result = runner(binary, queryArgs(key, pageSize, cursor), { site });
+      if (!result.ok) {
+        return failed(result.detail ?? "twg exited non-zero");
+      }
+      const page = decodePage(result.payload);
+      if (page === void 0) {
+        return failed(`twg returned no child list for parent = ${key}`);
+      }
+      for (const issue of page.issues) {
+        const row = decodeChild2(issue);
+        if (row !== void 0) rows.push(row);
+      }
+      if (rows.length >= cap) {
+        return {
+          ok: true,
+          children: withFoldedBlocks(rows.slice(0, cap)),
+          truncated: page.hasNextPage || rows.length > cap
+        };
+      }
+      if (!page.hasNextPage) {
+        return { ok: true, children: withFoldedBlocks(rows), truncated: false };
+      }
+      if (page.nextCursor === void 0) {
+        return failed(`twg reported another page of children for ${key} without a cursor`);
+      }
+      cursor = page.nextCursor;
+    }
+  } catch (error) {
+    if (error instanceof TwgNotFoundError) {
+      return { ok: false, reason: "twg-not-found", detail: error.message };
+    }
+    throw error;
+  }
+}
+function queryArgs(key, pageSize, cursor) {
+  return [
+    "jira",
+    "workitem",
+    "query",
+    "--jql",
+    `parent = ${key} ORDER BY created ASC`,
+    "--limit",
+    String(pageSize),
+    "--fields",
+    CHILD_FIELDS,
+    ...cursor !== void 0 ? ["--after", cursor] : []
+  ];
+}
+function failed(detail) {
+  return { ok: false, reason: "children-fetch-failed", detail };
+}
+function decodePage(payload) {
+  const issues = extractArrayPayload(payload, ["issues"]);
+  if (issues === void 0) return void 0;
+  const pageInfo = payload !== void 0 && isJsonObject(payload) ? payload.pageInfo : void 0;
+  if (pageInfo === void 0 || !isJsonObject(pageInfo)) {
+    return { issues, hasNextPage: false };
+  }
+  const nextCursor = pageInfo.nextCursor;
+  return {
+    issues,
+    hasNextPage: pageInfo.hasNextPage === true,
+    ...typeof nextCursor === "string" && nextCursor.length > 0 ? { nextCursor } : {}
+  };
+}
+function decodeChild2(value) {
+  if (!isJsonObject(value)) return void 0;
+  const key = value.key;
+  const summary = value.summary;
+  const status = decodeStatus(value.status);
+  const issuetype = decodeNamedEntity(value.issuetype);
+  if (typeof key !== "string" || typeof summary !== "string" || summary.length === 0 || status === void 0 || issuetype === void 0) {
+    return void 0;
+  }
+  const assignee = decodeNullableUser(value.assignee);
+  const links = blockLinksOf(value.issuelinks);
+  const subtasks = subtasksOf(value.subtasks);
+  try {
+    return {
+      child: {
+        key: asIssueKey(key),
+        summary,
+        status,
+        issuetype,
+        ...assignee !== void 0 ? { assignee } : {},
+        ...links.blockedBy.length > 0 ? { blockedBy: links.blockedBy } : {},
+        ...subtasks !== void 0 && subtasks.length > 0 ? { subtasks } : {}
+      },
+      blocks: links.blocks
+    };
+  } catch {
+    return void 0;
+  }
+}
+function withFoldedBlocks(rows) {
+  const blockers = /* @__PURE__ */ new Map();
+  for (const { child, blocks } of rows) {
+    for (const target of blocks) {
+      const set = blockers.get(target) ?? /* @__PURE__ */ new Set();
+      set.add(child.key);
+      blockers.set(target, set);
+    }
+  }
+  return rows.map(({ child }) => {
+    const more = blockers.get(child.key);
+    if (more === void 0) return child;
+    const blockedBy = mergeKeys(child.blockedBy, more);
+    return blockedBy === void 0 ? child : { ...child, blockedBy };
+  });
+}
+
+// ../../plugins/jira/src/epic/fetch.ts
+async function fetchEpic(options) {
+  const { key, site, memory, epics, runner, env } = options;
+  const item = await fetchWorkItem({ key, site, scope: "plugin", memory, runner, env });
+  if (!isEpic(item)) {
+    return {
+      ok: false,
+      reason: "not-an-epic",
+      detail: `${item.key} is a ${item.issuetype.name}, not an epic.`
+    };
+  }
+  const querySite = site ?? await resolveIndexedSite(memory, item.key);
+  const children = fetchEpicChildren({ key: item.key, site: querySite, runner, env });
+  if (!children.ok) {
+    return children;
+  }
+  const existing = await epics.getEpic(item.cloudId, item.key);
+  const url = typeof item.site === "string" && item.site.length > 0 ? browseUrl(item.site, item.key) : existing?.url;
+  const epic = {
+    cloudId: item.cloudId,
+    key: item.key,
+    summary: item.summary,
+    status: item.status,
+    ...item.assignee !== void 0 ? { assignee: item.assignee } : {},
+    ...url !== void 0 ? { url } : {},
+    ...existing?.lastWrittenAt !== void 0 ? { lastWrittenAt: existing.lastWrittenAt } : {},
+    ...existing?.lastAccessedAt !== void 0 ? { lastAccessedAt: existing.lastAccessedAt } : {},
+    codebases: existing?.codebases ?? {},
+    children: children.children,
+    childrenRefreshedAt: (options.now ?? /* @__PURE__ */ new Date()).toISOString(),
+    childrenTruncated: children.truncated,
+    ...existing?.archived === true ? { archived: true } : {}
+  };
+  await epics.setEpic(epic);
+  return { ok: true, epic };
+}
+
+// ../../plugins/jira/src/epic/archive.ts
+function withArchived(epic, archived) {
+  if (archived) return { ...epic, archived: true };
+  const cleared = { ...epic };
+  delete cleared.archived;
+  return cleared;
+}
+async function setEpicArchived(epics, key, archived) {
+  const stored = (await epics.listEpics()).filter((epic) => epic.key === key);
+  for (const record of stored) {
+    if (record.archived === true !== archived) {
+      await epics.setEpic(withArchived(record, archived));
+    }
+  }
+  return stored.length;
+}
+
+// ../../plugins/jira/src/epic/refresh.ts
+var DEFAULT_STALE_AFTER_MS = 864e5;
+function isStale(epic, options) {
+  if (epic.childrenRefreshedAt === void 0) return true;
+  const refreshedAt = Date.parse(epic.childrenRefreshedAt);
+  if (Number.isNaN(refreshedAt)) return true;
+  return options.now.getTime() - refreshedAt > options.olderThanMs;
+}
+function partitionStale(epics, options) {
+  const stale = [];
+  const fresh = [];
+  const archived = [];
+  for (const epic of epics) {
+    if (epic.archived === true) archived.push(epic);
+    else (isStale(epic, options) ? stale : fresh).push(epic);
+  }
+  return { stale, fresh, archived };
+}
+
+// ../../plugins/jira/src/panels/epic.ts
+var KEY_COLUMN = 11;
+var STATUS_COLUMN = 12;
+var ASSIGNEE_COLUMN = 10;
+var PROGRESS_COLUMN = 7;
+var AGE_COLUMN = 5;
+var ELLIPSIS = "...";
+function childrenWidths() {
+  return columnWidths(80, [KEY_COLUMN, STATUS_COLUMN, ASSIGNEE_COLUMN, null]);
+}
+function listWidths() {
+  return columnWidths(80, [KEY_COLUMN, PROGRESS_COLUMN, AGE_COLUMN, null]);
+}
+function refreshWidths() {
+  return columnWidths(80, [KEY_COLUMN, PROGRESS_COLUMN, null]);
+}
+function keyOf(record, what) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new TypeError(`Expected ${what} as an object`);
+  }
+  const key = sanitize(record.key);
+  if (key === "") {
+    throw new TypeError(`Expected ${what} carrying its key`);
+  }
+  return key;
+}
+function childrenOf(epic) {
+  return Array.isArray(epic.children) ? epic.children : [];
+}
+function isDone(child) {
+  return sanitize(child.status?.statusCategory?.key) === "done";
+}
+function firstName(assignee) {
+  return sanitize(assignee?.displayName).split(" ")[0] || "none";
+}
+function truncate(text6, width) {
+  if (displayWidth(text6) <= width) {
+    return text6;
+  }
+  let head = "";
+  let cells = 0;
+  for (const char of text6) {
+    const next = cells + displayWidth(char);
+    if (next > width - ELLIPSIS.length) {
+      break;
+    }
+    head += char;
+    cells = next;
+  }
+  return `${head.trimEnd()}${ELLIPSIS}`;
+}
+function subtaskRowsOf(child) {
+  return Array.isArray(child.subtasks) ? child.subtasks : [];
+}
+function subtaskCount(child) {
+  const subtasks = subtaskRowsOf(child);
+  return `${subtasks.filter(isDone).length}/${subtasks.length} sub-tasks`;
+}
+var SUBTASK_INDENT = "  \u21B3 ";
+function childRows(children, summaryWidth) {
+  return children.flatMap((child) => {
+    const subtasks = subtaskRowsOf(child);
+    const count2 = subtasks.length > 0 ? ` \xB7 ${subtaskCount(child)}` : "";
+    const row = [
+      keyOf(child, "a child"),
+      sanitize(child.status?.name),
+      firstName(child.assignee),
+      truncate(sanitize(child.summary), summaryWidth - displayWidth(count2)) + count2
+    ];
+    const nested = subtasks.map((subtask) => [
+      keyOf(subtask, "a sub-task"),
+      sanitize(subtask.status?.name),
+      subtask.assignee === void 0 ? "" : firstName(subtask.assignee),
+      SUBTASK_INDENT + truncate(sanitize(subtask.summary), summaryWidth - displayWidth(SUBTASK_INDENT))
+    ]);
+    return [row, ...nested];
+  });
+}
+function counts(epic) {
+  const children = childrenOf(epic);
+  return { done: children.filter(isDone).length, total: children.length };
+}
+function latestTouch2(epic, now) {
+  const touches = [epic.lastWrittenAt, epic.lastAccessedAt].map((touch2) => new Date(sanitize(touch2)).getTime()).filter((touch2) => !Number.isNaN(touch2));
+  if (touches.length === 0) {
+    return void 0;
+  }
+  return formatAge(new Date(Math.max(...touches)).toISOString(), now);
+}
+function epicLines(epic, now) {
+  const key = keyOf(epic, "an epic");
+  const summary = sanitize(epic.summary);
+  const lines = [summary ? `${key}: ${summary}` : key];
+  const status = sanitize(epic.status?.name);
+  if (status) {
+    lines.push(`\xB7 Status: ${status}`);
+  }
+  lines.push(`\xB7 Assignee: ${sanitize(epic.assignee?.displayName) || "none"}`);
+  const { done, total } = counts(epic);
+  lines.push(`\xB7 Children: ${done} done / ${total}`);
+  const refreshed = formatAge(epic.childrenRefreshedAt, now);
+  lines.push(refreshed === void 0 ? "\xB7 Refreshed: never" : `\xB7 Refreshed: ${refreshed} ago`);
+  if (epic.childrenTruncated === true) {
+    lines.push("\xB7 Child list capped; Jira holds more");
+  }
+  const url = safeUrl(epic.url);
+  if (url) {
+    lines.push(`\xB7 ${url}`);
+  }
+  return lines;
+}
+function renderEpicPanel(epic, options = {}) {
+  const now = options.now ?? /* @__PURE__ */ new Date();
+  const header = ["Epic", epicLines(epic, now)];
+  const lines = drawTable({ rows: [header] }, tableWidths());
+  const children = childrenOf(epic);
+  if (children.length > 0) {
+    const widths = childrenWidths();
+    const summaryWidth = widths.columns[widths.columns.length - 1];
+    const rows = childRows(children, summaryWidth);
+    lines.push(...drawColumns({ rows }, widths));
+  }
+  return fence(lines);
+}
+function renderEpicListPanel(list, options = {}) {
+  if (!list || typeof list !== "object" || !Array.isArray(list.epics)) {
+    throw new TypeError("Expected an epic list carrying its epics");
+  }
+  const now = options.now ?? /* @__PURE__ */ new Date();
+  const all = list.filter === "all";
+  const title = all ? "All repos" : `This repo \xB7 ${sanitize(list.codebase) || "none"}`;
+  if (list.epics.length === 0) {
+    const detail = all ? "No epics recorded yet" : "No epics recorded for this repo yet";
+    return fencedPanel({ title, detail }, tableWidths());
+  }
+  const widths = listWidths();
+  const summaryWidth = widths.columns[widths.columns.length - 1];
+  const rows = list.epics.map((epic) => {
+    const { done, total } = counts(epic);
+    return [
+      keyOf(epic, "an epic"),
+      `${done}/${total}`,
+      latestTouch2(epic, now) ?? "never",
+      truncate(sanitize(epic.summary), summaryWidth)
+    ];
+  });
+  return fencedColumns({ title, rows }, widths);
+}
+function renderEpicRefreshPanel(epics) {
+  if (!Array.isArray(epics)) {
+    throw new TypeError("Expected the refreshed epics as an array");
+  }
+  if (epics.length === 0) {
+    return "";
+  }
+  const widths = refreshWidths();
+  const summaryWidth = widths.columns[widths.columns.length - 1];
+  const rows = epics.map((epic) => {
+    const { done, total } = counts(epic);
+    return [
+      keyOf(epic, "an epic"),
+      `${done}/${total}`,
+      truncate(sanitize(epic.summary), summaryWidth)
+    ];
+  });
+  const title = `Refreshed ${epics.length} ${epics.length === 1 ? "epic" : "epics"}`;
+  return fencedColumns({ title, rows }, widths);
+}
+
+// ../../plugins/jira/src/commands/epic.ts
+var EPIC_GET_SCHEMA = "jira-workflows/epic-get/v1";
+var EPIC_REFRESH_SCHEMA = "jira-workflows/epic-refresh/v1";
+var EPIC_ARCHIVE_SCHEMA = "jira-workflows/epic-archive/v1";
+function registerEpicCommands(program2, options) {
+  const stores = createClaudeStores(options);
+  const memory = createJiraMemory(stores);
+  const epics = createJiraEpicStore(stores.plugin);
+  const epic = program2.command("epic").description("Read the epics the agent has worked with, and their children");
+  epic.command("get").description(
+    "Print the stored epic and its children as JSON, fetching them first where none is stored or the children were never fetched; --refresh reads Jira regardless, --render draws a panel"
+  ).requiredOption("--key <issue-key>", "Jira issue key of the epic").option(
+    "--site <site>",
+    "Jira site; omit for the project's indexed site, then twg's default site"
+  ).option("--refresh", "read Jira even where a record is stored, and replace its children").option("--render", "draw the record as one fenced panel instead of printing JSON").action(async (opts) => {
+    const key = issueKeyArgument(opts.key);
+    const record = await readEpicOrPrintFailure({
+      key,
+      site: opts.site,
+      refresh: opts.refresh ?? false,
+      memory,
+      epics
+    });
+    if (record === void 0) return;
+    const codebase = currentCodebase(process.cwd());
+    const touched = await touchEpic(epics, record.cloudId, record.key, { kind: "access", codebase }) ?? record;
+    if (opts.render) {
+      process.stdout.write(renderEpicPanel(touched));
+    } else {
+      console.log(JSON.stringify(touched, null, 2));
+    }
+  });
+  epic.command("list").description(
+    "Print the stored epics touched from this codebase, newest first, as JSON; --all lists every codebase, --render draws a panel. Never writes"
+  ).option("--all", "every epic recorded, ordered by its latest touch from any codebase").option("--show-archived", "include the archived epics, which are left out unless asked for").option("--limit <n>", "at most this many epics; 20 unless given").option("--render", "draw the list as one fenced panel instead of printing JSON").action(async (opts) => {
+    const limit = parseLimit(opts.limit);
+    const codebase = currentCodebase(process.cwd());
+    const listing = await listEpics(epics, {
+      codebase,
+      filter: opts.all ? "all" : "codebase",
+      limit,
+      showArchived: opts.showArchived === true
+    });
+    if (opts.render) {
+      process.stdout.write(renderEpicListPanel(listingAsSeenFromCodebase(listing)));
+    } else {
+      console.log(JSON.stringify(listing, null, 2));
+    }
+  });
+  epic.command("refresh").description(
+    "Read one epic and its children from Jira again (--key), or every stored epic whose children are older than --older-than (--stale); replaces each child set whole"
+  ).option("--key <issue-key>", "Jira issue key of the epic to refresh").option("--stale", "refresh every stored epic whose children were never fetched or are old").option(
+    "--older-than <duration>",
+    "with --stale, the age past which a child set is refreshed; 1d unless given"
+  ).option(
+    "--site <site>",
+    "Jira site; omit for the site each record was stored from, then twg's default site"
+  ).action(async (opts) => {
+    const { targets, skipped } = await refreshTargets(opts, epics);
+    const codebase = currentCodebase(process.cwd());
+    printVerdict(
+      await refreshEpics(targets, skipped, { site: opts.site, codebase, memory, epics })
+    );
+  });
+  epic.command("archive").description(
+    "Mark the stored epic as archived, so the list leaves it out unless asked; --undo clears the mark. Keeps the record, its children and its touches; never reads or writes Jira"
+  ).requiredOption("--key <issue-key>", "Jira issue key of the epic").option("--undo", "clear the archived mark instead of setting it").action(async (opts) => {
+    const key = issueKeyArgument(opts.key);
+    const archived = opts.undo !== true;
+    const matched = await setEpicArchived(epics, key, archived);
+    printVerdict(
+      matched > 0 ? pass(EPIC_ARCHIVE_SCHEMA, { key, archived }) : warn(
+        EPIC_ARCHIVE_SCHEMA,
+        [
+          {
+            code: "epic-not-found",
+            detail: `No epic ${key} is stored; nothing was ${archived ? "archived" : "restored"}.`
+          }
+        ],
+        { key, archived }
+      )
+    );
+  });
+  return program2;
+}
+async function refreshTargets(opts, epics) {
+  if (opts.key !== void 0 === (opts.stale === true)) {
+    throw new UsageError("pass exactly one of --key <issue-key> or --stale");
+  }
+  if (opts.key !== void 0) {
+    if (opts.olderThan !== void 0) {
+      throw new UsageError("--older-than applies to --stale only");
+    }
+    const key = issueKeyArgument(opts.key);
+    const stored = (await epics.listEpics()).filter((epic) => epic.key === key);
+    const cloudId = stored.length === 1 ? stored[0].cloudId : void 0;
+    return { targets: [{ key, ...cloudId !== void 0 ? { cloudId } : {} }], skipped: [] };
+  }
+  const olderThanMs = parseOlderThan(opts.olderThan);
+  const partition = partitionStale(await epics.listEpics(), { now: /* @__PURE__ */ new Date(), olderThanMs });
+  return {
+    targets: partition.stale.map(({ key, cloudId }) => ({ key, cloudId })),
+    skipped: [...partition.fresh, ...partition.archived].map((epic) => epic.key)
+  };
+}
+function parseOlderThan(value) {
+  if (value === void 0) return DEFAULT_STALE_AFTER_MS;
+  try {
+    return parseDuration(value);
+  } catch (error) {
+    throw new UsageError(`--older-than: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+async function refreshEpics(targets, skipped, options) {
+  const refreshed = [];
+  const reasons = [];
+  const extra = () => ({ refreshed: refreshed.map((epic) => epic.key), skipped });
+  const panels = () => renderEpicRefreshPanel(refreshed);
+  for (const target of targets) {
+    const outcome = await refreshEpic(target, options);
+    if (outcome.ok) {
+      refreshed.push(outcome.epic);
+      continue;
+    }
+    const reason = { code: outcome.code, detail: nameKey(target.key, outcome.detail) };
+    if (outcome.code === "twg-not-found") {
+      return fail(EPIC_REFRESH_SCHEMA, [...reasons, reason], extra(), { panels: panels() });
+    }
+    reasons.push(reason);
+  }
+  const verdict = pass(EPIC_REFRESH_SCHEMA, extra(), { panels: panels() });
+  return reasons.reduce((folded, reason) => withReason(folded, reason, "warn"), verdict);
+}
+function nameKey(key, detail) {
+  return detail.includes(key) ? detail : `${key}: ${detail}`;
+}
+async function refreshEpic(target, options) {
+  const { memory, epics, codebase } = options;
+  const site = await resolveRefreshSite(memory, target, options.site);
+  if (!site.ok) return { ok: false, code: "site-unresolved", detail: site.detail };
+  try {
+    const fetched = await fetchEpic({ key: target.key, site: site.site, memory, epics });
+    if (!fetched.ok) return { ok: false, code: fetched.reason, detail: fetched.detail };
+    const { cloudId, key } = fetched.epic;
+    const touched = await touchEpic(epics, cloudId, key, { kind: "access", codebase });
+    return { ok: true, epic: touched ?? fetched.epic };
+  } catch (error) {
+    if (!(error instanceof FetchWorkItemError)) throw error;
+    return { ok: false, code: headerFailureCode(error), detail: error.message };
+  }
+}
+async function resolveRefreshSite(memory, target, site) {
+  if (site !== void 0) return { ok: true, site };
+  const indexed = await memory.getCloudSites(projectKeyOfIssueKey(target.key));
+  const picked = (target.cloudId === void 0 ? void 0 : pickIndexedSite(indexed, target.cloudId)) ?? pickIndexedSite(indexed);
+  if (picked !== void 0) return { ok: true, site: picked.tenantName };
+  if (indexed.length === 0) return { ok: true };
+  return { ok: false, detail: siteUnresolvedDetail(target.key, indexed) };
+}
+async function readEpicOrPrintFailure(options) {
+  const { key, site, refresh, memory, epics } = options;
+  const indexed = await memory.getCloudSites(projectKeyOfIssueKey(key));
+  const picked = pickIndexedSite(indexed, site);
+  if (picked !== void 0) {
+    const stored = refresh ? void 0 : await epics.getEpic(picked.cloudId, key);
+    if (stored?.childrenRefreshedAt !== void 0) return stored;
+  } else if (site === void 0 && indexed.length > 1) {
+    printVerdict(siteUnresolved(key, indexed));
+    return void 0;
+  }
+  try {
+    const fetched = await fetchEpic({ key, site: site ?? picked?.tenantName, memory, epics });
+    if (fetched.ok) return fetched.epic;
+    printVerdict(
+      fail(EPIC_GET_SCHEMA, [{ code: fetched.reason, detail: fetched.detail }], {
+        key,
+        site: site ?? null
+      })
+    );
+  } catch (error) {
+    if (!(error instanceof FetchWorkItemError)) throw error;
+    printVerdict(headerFailureVerdict(error, key, site));
+  }
+  return void 0;
+}
+function siteUnresolvedDetail(key, indexed) {
+  const candidates = indexed.map((site) => `  - ${site.tenantName} (${site.siteUrl})`).join("\n");
+  return `Multiple Jira sites are indexed for project "${projectKeyOfIssueKey(key)}"; pass --site to pick one. Candidate sites:
+${candidates} Nothing was read or written.`;
+}
+function siteUnresolved(key, indexed) {
+  return fail(
+    EPIC_GET_SCHEMA,
+    [{ code: "site-unresolved", detail: siteUnresolvedDetail(key, indexed) }],
+    {
+      key,
+      site: null,
+      sites: indexed.map((site) => ({
+        name: site.tenantName,
+        url: site.siteUrl,
+        cloudId: site.cloudId
+      }))
+    }
+  );
+}
+function headerFailureVerdict(error, key, site) {
+  const code = headerFailureCode(error);
+  if (code === "site-unresolved") {
+    return fail(EPIC_GET_SCHEMA, [{ code, detail: error.message }], {
+      key,
+      site: site ?? null,
+      sites: error.sites
+    });
+  }
+  return fail(EPIC_GET_SCHEMA, [{ code, detail: error.message }], { key, site: site ?? null });
+}
+function headerFailureCode(error) {
+  if (error.code === "wrong-site" || error.code === "cloud-id-unresolved") return "site-unresolved";
+  if (error.code === "work-item-not-found" || error.code === "not-a-work-item")
+    return "epic-not-found";
+  return error.code;
+}
+function parseLimit(value) {
+  if (value === void 0) return void 0;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new UsageError(`--limit must be a whole number of at least 1; got "${value}"`);
+  }
+  return parsed;
+}
+
+// ../../plugins/jira/src/recent/archive.ts
+async function setRecentArchived(store, key, archived) {
+  const projectKey = projectKeyOf2(key);
+  const groups = (await store.listGroups()).filter((group) => group.projectKey === projectKey);
+  let matched = 0;
+  for (const group of groups) {
+    const row = group.items.find((item) => item.key === key);
+    if (row === void 0) continue;
+    matched += 1;
+    if (row.archived === true === archived) continue;
+    const marked = archived ? { ...row, archived: true } : withoutMark(row);
+    await store.setGroup({
+      ...group,
+      items: group.items.map((item) => item.key === key ? marked : item)
+    });
+  }
+  return matched;
+}
+function withoutMark(row) {
+  const cleared = { ...row };
+  delete cleared.archived;
+  return cleared;
+}
+
+// ../../plugins/jira/src/recent/list.ts
+var DEFAULT_RECENT_LIST_LIMIT = 20;
+async function listRecentWork(store, options) {
+  const { codebase, filter } = options;
+  const limit = options.limit ?? DEFAULT_RECENT_LIST_LIMIT;
+  const touchOf = (item) => filter === "codebase" ? item.codebases[codebase] : item;
+  const ranked = (await store.listGroups()).flatMap((group) => group.items.map((item) => ({ group, item }))).filter(({ item }) => options.showArchived === true || item.archived !== true).flatMap(({ group, item }) => {
+    const touch2 = touchOf(item);
+    return touch2 === void 0 ? [] : [{ group, item, latest: latestTouch(touch2) ?? "" }];
+  }).sort((a, b) => b.latest.localeCompare(a.latest) || a.item.key.localeCompare(b.item.key)).slice(0, limit);
+  const groups = /* @__PURE__ */ new Map();
+  for (const { group, item } of ranked) {
+    const id = `${group.cloudId}/${group.projectKey}`;
+    const held = groups.get(id);
+    groups.set(id, { ...group, items: [...held?.items ?? [], item] });
+  }
+  return { codebase, filter, groups: [...groups.values()] };
+}
+
+// ../../plugins/jira/src/commands/recent.ts
+var RECENT_ARCHIVE_SCHEMA = "jira-workflows/recent-archive/v1";
+function registerRecentCommands(program2, options) {
+  const recent = createJiraRecentWorkStore(createClaudeStores(options).plugin);
+  const group = program2.command("recent").description("Read the work items the agent has worked with, grouped by project");
+  group.command("list").description(
+    "Print the stored recent work touched from this codebase, grouped by project and newest first, as JSON; --all lists every codebase. Never writes"
+  ).option("--all", "every item recorded, ordered by its latest touch from any codebase").option("--show-archived", "include the archived items, which are left out unless asked for").option("--limit <n>", "at most this many items in all; 20 unless given").action(async (opts) => {
+    const listing = await listRecentWork(recent, {
+      codebase: currentCodebase(process.cwd()),
+      filter: opts.all ? "all" : "codebase",
+      limit: parseLimit(opts.limit),
+      showArchived: opts.showArchived === true
+    });
+    console.log(JSON.stringify(listing, null, 2));
+  });
+  group.command("archive").description(
+    "Mark the stored item as archived, so the list leaves it out unless asked; --undo clears the mark. Keeps the row and its touches; never reads or writes Jira"
+  ).requiredOption("--key <issue-key>", "Jira issue key of the item").option("--undo", "clear the archived mark instead of setting it").action(async (opts) => {
+    const key = issueKeyArgument(opts.key);
+    const archived = opts.undo !== true;
+    const matched = await setRecentArchived(recent, key, archived);
+    printVerdict(
+      matched > 0 ? pass(RECENT_ARCHIVE_SCHEMA, { key, archived }) : warn(
+        RECENT_ARCHIVE_SCHEMA,
+        [
+          {
+            code: "item-not-found",
+            detail: `No recent work item ${key} is stored; nothing was ${archived ? "archived" : "restored"}.`
+          }
+        ],
+        { key, archived }
+      )
+    );
   });
   return program2;
 }
@@ -18499,6 +20007,81 @@ function registerOnboardingCommands(program2, pluginRoot) {
 // ../../plugins/jira/src/commands/gc.ts
 import { text as text5 } from "node:stream/consumers";
 
+// ../../plugins/jira/src/gc/epics.ts
+var EPIC_RETENTION_MS = 90 * 864e5;
+function newestEpicTouch(epic) {
+  const candidates = [epic, ...Object.values(epic.codebases)].map(latestTouch).filter((time) => time !== void 0);
+  if (candidates.length === 0) return void 0;
+  return candidates.reduce(
+    (newest, candidate) => Date.parse(candidate) > Date.parse(newest) ? candidate : newest
+  );
+}
+async function pruneStaleEpics(store, options) {
+  const maxAgeMs = options.maxAgeMs ?? EPIC_RETENTION_MS;
+  const dryRun = options.dryRun === true;
+  const epics = await store.listEpics();
+  const pruned = [];
+  for (const epic of epics) {
+    const agedBy = newestEpicTouch(epic) ?? epic.childrenRefreshedAt;
+    if (agedBy === void 0) continue;
+    const agedAt = Date.parse(agedBy);
+    if (Number.isNaN(agedAt) || options.now.getTime() - agedAt <= maxAgeMs) continue;
+    if (!dryRun) {
+      await store.deleteEpic(epic.cloudId, epic.key);
+    }
+    pruned.push({ key: epic.key, cloudId: epic.cloudId, agedBy });
+  }
+  return { maxAgeMs, dryRun, examined: epics.length, pruned };
+}
+function formatEpicPruneReport(report) {
+  const verb = report.dryRun ? "Would prune" : "Pruned";
+  const lines = [
+    `${verb} ${report.pruned.length} of ${report.examined} stored ${report.examined === 1 ? "epic" : "epics"} untouched for longer than ${Math.round(report.maxAgeMs / 864e5)} days`
+  ];
+  for (const epic of report.pruned) {
+    lines.push(
+      `  ${report.dryRun ? "would prune" : "pruned"} ${epic.key} (newest touch ${epic.agedBy})`
+    );
+  }
+  return lines.join("\n");
+}
+
+// ../../plugins/jira/src/gc/recent.ts
+async function pruneStaleRecent(store, options) {
+  const maxAgeMs = options.maxAgeMs ?? EPIC_RETENTION_MS;
+  const dryRun = options.dryRun === true;
+  const groups = await store.listGroups();
+  const pruned = [];
+  let examined = 0;
+  for (const group of groups) {
+    examined += group.items.length;
+    const kept = group.items.filter((item) => {
+      const agedBy = newestEpicTouch(item);
+      if (agedBy === void 0) return true;
+      const agedAt = Date.parse(agedBy);
+      if (Number.isNaN(agedAt) || options.now.getTime() - agedAt <= maxAgeMs) return true;
+      pruned.push({ key: item.key, cloudId: group.cloudId, agedBy });
+      return false;
+    });
+    if (dryRun || kept.length === group.items.length) continue;
+    if (kept.length === 0) await store.deleteGroup(group.cloudId, group.projectKey);
+    else await store.setGroup({ ...group, items: kept });
+  }
+  return { maxAgeMs, dryRun, examined, pruned };
+}
+function formatRecentPruneReport(report) {
+  const verb = report.dryRun ? "Would prune" : "Pruned";
+  const lines = [
+    `${verb} ${report.pruned.length} of ${report.examined} stored recent work ${report.examined === 1 ? "item" : "items"} untouched for longer than ${Math.round(report.maxAgeMs / 864e5)} days`
+  ];
+  for (const item of report.pruned) {
+    lines.push(
+      `  ${report.dryRun ? "would prune" : "pruned"} ${item.key} (newest touch ${item.agedBy})`
+    );
+  }
+  return lines.join("\n");
+}
+
 // ../../plugins/jira/src/gc/sweep.ts
 import { promises as fs4 } from "node:fs";
 
@@ -18615,7 +20198,17 @@ async function runSessionGc(options) {
       };
       await stores.plugin.set(gcKeys.lastReport, gcReport);
     }
-    return { kind: "swept", report };
+    const epics = await pruneStaleEpics(createJiraEpicStore(stores.plugin), {
+      now,
+      ...options.epicRetentionMs !== void 0 ? { maxAgeMs: options.epicRetentionMs } : {},
+      dryRun
+    });
+    const recent = await pruneStaleRecent(createJiraRecentWorkStore(stores.plugin), {
+      now,
+      ...options.epicRetentionMs !== void 0 ? { maxAgeMs: options.epicRetentionMs } : {},
+      dryRun
+    });
+    return { kind: "swept", report, epics, recent };
   } catch (error) {
     return { kind: "failed", message: error instanceof Error ? error.message : String(error) };
   }
@@ -18656,7 +20249,7 @@ async function resolveCurrentSessionId(fromCliOptions) {
 function registerGcCommands(program2, options) {
   const stores = createClaudeStores(options);
   program2.command("gc").description(
-    "Remove session memory directories older than the 21-day retention (silent by default)"
+    "Remove session memory directories older than the 21-day retention and stored epics and recent work items untouched for 90 days (silent by default)"
   ).option("--report", "print what the sweep did; without it, nothing is written to stdout").option("--dry-run", "report what would be removed and remove nothing").option("--force", "sweep even if one already ran within the last 24 hours").action(async (opts) => {
     const outcome = await runSessionGc({
       stores,
@@ -18686,7 +20279,9 @@ function describeOutcome(outcome) {
     case "throttled":
       return `Nothing swept: a sweep already ran at ${outcome.lastSweptAt}.`;
     case "swept":
-      return formatSessionSweepReport(outcome.report);
+      return `${formatSessionSweepReport(outcome.report)}
+${formatEpicPruneReport(outcome.epics)}
+${formatRecentPruneReport(outcome.recent)}`;
     case "failed":
       return `Sweep failed: ${outcome.message}`;
   }
@@ -18823,18 +20418,20 @@ function buildProgram(options, hookInput) {
   } });
   registerStorageCommands(program2, options, {
     onRead: (keys) => {
-      const counts = /* @__PURE__ */ new Map();
+      const counts2 = /* @__PURE__ */ new Map();
       for (const key of keys) {
         const type = assetTypeForStoredKey(key);
         if (type === void 0) continue;
-        counts.set(type, (counts.get(type) ?? 0) + 1);
+        counts2.set(type, (counts2.get(type) ?? 0) + 1);
       }
-      for (const [assetType, assetCount] of counts)
+      for (const [assetType, assetCount] of counts2)
         noteAssetRetrieval({ assetType, assetCount, retrievalSource: "local" });
     }
   });
   registerWorkItemCommands(program2, options);
   registerWorkItemClaimCommands(program2, options);
+  registerEpicCommands(program2, options);
+  registerRecentCommands(program2, options);
   registerProjectContextCommands(program2, options);
   registerCloudSitesRenderCommands(program2, options);
   registerSessionSignalCommands(program2, options);

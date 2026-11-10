@@ -30,6 +30,8 @@ Without `--render` or `--full`, stdout is the stored Work Item cut to the fields
 
 `remoteLinks` carries an attached pull request, branch, commit, or Confluence page. Treat an empty `remoteLinks` as the item's real state. The default output also carries `issuelinks` and the comment thread as one `comments` array. It leaves out the project `customfield_*` keys, Jira bookkeeping such as `expand` and `watches`, and `cloudId`.
 
+Where the key is an epic and the question is about its children, progress, or status, read it with `jira-cli.mjs epic get` instead; see `epics.md`. `work-item get` on an epic returns the epic alone, with no children: use it for the epic's own description, comments, or fields.
+
 For 1 to 3 known keys, read each with its own `work-item get` call. For 4 or more, use one call:
 
 ```bash

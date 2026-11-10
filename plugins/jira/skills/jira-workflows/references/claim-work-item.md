@@ -27,6 +27,7 @@ Add a flag only on its trigger:
 | User approved a takeover | `--take-over` |
 | User chose to start without taking over | `--skip-assignee` |
 | User chose a transition from `transition.candidates` | `--status "<candidate.to>"` |
+| The item tracks work whose pull request is already open | `--for-review`. Carry it on retries of this claim |
 | User supplied a screen-required value | `--field <customfield_id>=<value>`, once per field |
 | The request was to work on, pick up, or execute the item, not only to claim it | `--prepare-branch` |
 | The tree is not the session's working directory (relevant only with `--prepare-branch`) | `--path <absolute path>` |
@@ -83,6 +84,6 @@ Where the user asked only to claim, assign, or start the item, stop at the repor
 
 Where the user asked to work on, pick up, or execute the item, and the verdict was `pass` or a `warn` the report has named, continue into the work in the session: run `jira-cli.mjs work-item get --key <KEY>`, with the claim's `--site` where it had one, and implement against the description's `Acceptance criteria`, `Verification`, and `Out of scope` sections, else the description as written. Do not pass `--refresh`: the claim stored the item in the session scope. Do not continue after a `fail`, or while `branch-pending` stands unresolved. Where `branch-failed` stands after `Act On The Verdict` has been followed, ask once whether to continue on the current branch or stop, default stop.
 
-Where `branch.action` is `skipped` and `branch.carriesKey` is `false`, suggest preparing a branch for the item in one sentence, naming it as `prepare a branch for <KEY>`. Do not run it unasked. Where the user asks for it, see `prepare-branch.md`.
+Where `branch.action` is `skipped` because the tree is not a git working tree or is on a detached HEAD, say so from `branch.detail` and do not suggest a branch.
 
 Once the work is done and the item's `Verification` commands pass, offer publishing as the next step, naming it as `publish the changes for <KEY>`. Do not start it unasked. See `publish-changes.md`.

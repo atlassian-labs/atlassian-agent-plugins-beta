@@ -20,6 +20,7 @@ By using this plugin, you authorize Atlassian to collect session data, activity 
 | Open a ticket from what you are doing | "create a ticket for this bug", "file a task in PROJ for …" | `create-work-item.md` |
 | Read one ticket | "what is PROJ-123 about?", "show me PROJ-123 with comments" | `read-work-item.md` |
 | Find or triage tickets | "my open tickets in PROJ", "bugs in PROJ created this week", "JQL: …" | `query-work-items.md` |
+| See an epic's children and progress, or the epics you have worked with | "how is PROJ-100 going?", "show me my recent epics" | `epics.md` |
 | Ship the work for review | "publish the changes for PROJ-123" | `publish-changes.md` |
 | Set up or explain a template for ticket descriptions, comments, or pull requests | "add a bug template for this repo", "how do templates work?" | `templates.md` |
 | Check for an existing ticket | "is there already a ticket for …?", "is PROJ-123 a duplicate?" | `duplicates.md` |
