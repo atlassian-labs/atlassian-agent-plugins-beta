@@ -35,8 +35,6 @@ item.
 
 - Claude Code or Codex (desktop or command line).
 - Node.js 20.6 or later.
-- A GitHub account with access to this repository, set up so that Git can use it. If you use the
-  GitHub CLI, run `gh auth login` and then `gh auth setup-git`.
 - Permission to add this repository as a plugin marketplace. If your organisation restricts which
   plugin marketplaces can be added, ask your administrator to allow it before you install.
 - Atlassian's **twg** command-line tool, installed and signed in. See the
