@@ -31,10 +31,24 @@ item.
   Jira work item.
 - **Read more:** [docs/plugins/jira/README.md](docs/plugins/jira/README.md)
 
+### Memory plugin
+
+Code memories give your coding agent a shared memory of your repositories. Decisions,
+conventions and pitfalls learned in one session are recalled in later sessions, by you and by
+teammates with access to the same repository. Available to customers in the Early Access
+Program, and an organization admin must turn it on first.
+
+- **Install:** `memory@atlassian-beta-marketplace`
+- **Disclosure:** when a session ends, its full transcript is uploaded to Atlassian, sanitized,
+  and used by a third-party large language model to create code memories. Data is stored in the
+  United States, and you can't view, edit or delete individual transcripts or memories during
+  the EAP.
+- **Read more:** [docs/plugins/memory/README.md](docs/plugins/memory/README.md)
+
 ## Before you install
 
 - Claude Code or Codex (desktop or command line).
-- Node.js 20.6 or later.
+- Node.js 20.6 or later (22 or later for the Memory plugin).
 - Permission to add this repository as a plugin marketplace. If your organisation restricts which
   plugin marketplaces can be added, ask your administrator to allow it before you install.
 - Atlassian's **twg** command-line tool, installed and signed in. See the
@@ -52,6 +66,7 @@ setup and how to check it works.
 ```bash
 claude plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
 claude plugin install jira@atlassian-beta-marketplace
+claude plugin install memory@atlassian-beta-marketplace
 ```
 
 ### Codex
@@ -59,6 +74,7 @@ claude plugin install jira@atlassian-beta-marketplace
 ```bash
 codex plugin marketplace add https://github.com/atlassian-labs/atlassian-agent-plugins-beta.git
 codex plugin add jira@atlassian-beta-marketplace
+codex plugin add memory@atlassian-beta-marketplace
 ```
 
 Start a new session, then run `claude plugin list` or `codex plugin list` to check which plugins
@@ -68,7 +84,9 @@ checkout, are in [docs/installation.md](docs/installation.md).
 ## Turn off a plugin
 
 Each plugin can be turned off on its own. See **Turn off the plugin** in the
-[Jira plugin README](docs/plugins/jira/README.md#turn-off-the-plugin).
+[Jira plugin README](docs/plugins/jira/README.md#turn-off-the-plugin), and
+**Turning it off and requesting deletion** in the
+[Memory plugin README](docs/plugins/memory/README.md#turning-it-off-and-requesting-deletion).
 
 ## Troubleshooting
 

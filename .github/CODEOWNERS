@@ -11,6 +11,9 @@
 /plugins/jira/ @jkay-atlas @monners @Chatter5849 @asvita11
 /docs/plugins/jira/ @jkay-atlas @monners @Chatter5849 @asvita11
 
+/plugins/memory/ @Chatter5849
+/docs/plugins/memory/ @Chatter5849
+
 # Release channel wiring: the marketplace manifests decide what beta users receive.
 /.claude-plugin/ @jkay-atlas @monners @Chatter5849 @asvita11
 /.agents/plugins/ @jkay-atlas @monners @Chatter5849 @asvita11

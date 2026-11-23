@@ -56,12 +56,47 @@ in. If you cannot open a work item in a browser, the plugin cannot read it eithe
 Turning the plugin off stops anything further from being written. It does not remove what
 was already written to work items: edit or delete those in Jira.
 
+## Memory plugin
+
+The [Memory plugin README](plugins/memory/README.md) is the full notice for code memories.
+In short:
+
+### What it can see
+
+The repository you are working in, and the code memories your site holds for it. Recall is
+scoped to people with read access to the repository in Bitbucket Cloud or GitHub.
+
+### What it can change
+
+Nothing in your Atlassian products and nothing in your working tree. It adds recalled
+memories to the agent's context, and uploads the session transcript when the session ends.
+
+### What leaves your machine
+
+- **Your session transcript, to Atlassian**: only after an organization admin has turned on
+  **Sessions [Beta]** with **Capture full transcripts**, and you have acknowledged the notice
+  your agent shows. It includes your prompts, the agent's responses, and tool output such as
+  file contents and command results.
+- **What happens to it**: Atlassian attempts to redact secrets and personal information
+  (best effort), then a third-party large language model extracts code memories from the
+  sanitized transcript. Raw transcripts are deleted after 30 days; sanitized transcripts are
+  kept for the EAP; code memories are kept until your Jira subscription terminates. Everything
+  is stored and processed in the United States.
+- **Memory searches**: when the agent recalls memories, its search is sent to Atlassian.
+
+You can pause capture with `twg session set upload disable` and resume it with
+`twg session set upload enable`. Turning capture off, or disabling the plugin, does not delete
+what was already uploaded: ask [Atlassian Support](https://support.atlassian.com) to delete
+transcripts and memories for your site or for specific repositories.
+
 ## Practical advice
 
 - **Work on a branch.** Beta software plus an agent that edits files is a good reason not to
   be on `main`.
 - **Review writes before trusting them.** Especially anything the agent posts back to a work
   item other people read.
+- **Keep secrets out of sessions you upload.** With the Memory plugin, transcripts include
+  tool output as well as prompts. Pause capture before confidential work.
 - **Mind what you paste.** Prompt content reaches your model provider. That is true with or
   without these plugins, but fetched content increases how much of it there is.
 - **Redact before filing issues.** GitHub issues here are public. See
