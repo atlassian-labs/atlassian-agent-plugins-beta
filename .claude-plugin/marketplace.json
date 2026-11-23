@@ -20,7 +20,25 @@
       "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
       "license": "Apache-2.0",
       "category": "productivity",
-      "tags": ["atlassian", "beta", "jira", "workflow", "jql", "teamwork-graph"],
+      "tags": [
+        "atlassian",
+        "beta",
+        "jira",
+        "workflow",
+        "jql",
+        "teamwork-graph"
+      ],
+      "strict": true
+    },
+    {
+      "name": "memory",
+      "displayName": "Teamwork Graph Memory",
+      "source": "./plugins/memory",
+      "description": "Recall your team's repository knowledge before code work and upload session transcripts to Teamwork Graph for memory extraction when the session ends.",
+      "author": {
+        "name": "Atlassian"
+      },
+      "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
       "strict": true
     }
   ]
