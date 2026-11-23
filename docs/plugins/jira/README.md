@@ -184,4 +184,4 @@ For problems shared by every plugin, such as installation, `twg` and sign-in, se
 ## Data and privacy
 
 What this plugin reads, writes and sends is described in
-[docs/data-and-privacy.md](../../../docs/data-and-privacy.md).
+[docs/data-and-privacy.md](../../../docs/data-and-privacy.md#jira-plugin).

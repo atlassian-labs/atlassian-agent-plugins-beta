@@ -37,23 +37,30 @@ export function compareVersions(left, right) {
   return Math.sign(a.prerelease.length - b.prerelease.length)
 }
 
-export function pluginVersion() {
-  const manifest = (host) => JSON.parse(readFileSync(resolve(root, 'plugins/jira', host, 'plugin.json'), 'utf8'))
+export function pluginNames(marketplacePath = resolve(root, '.claude-plugin/marketplace.json')) {
+  const names = JSON.parse(readFileSync(marketplacePath, 'utf8')).plugins.map((plugin) => plugin.name)
+  if (names.length === 0) throw new Error('The marketplace lists no plugins')
+  return names
+}
+
+export function pluginVersion(name, pluginsDir = resolve(root, 'plugins')) {
+  const manifest = (host) => JSON.parse(readFileSync(resolve(pluginsDir, name, host, 'plugin.json'), 'utf8'))
   const claude = manifest('.claude-plugin')
   const codex = manifest('.codex-plugin')
-  if (claude.name !== 'jira' || codex.name !== 'jira') throw new Error('Plugin manifest names must be jira')
-  if (claude.version !== codex.version) throw new Error('Claude and Codex plugin versions differ')
+  if (claude.name !== name || codex.name !== name) throw new Error(`Plugin manifest names must be ${name}`)
+  if (claude.version !== codex.version) throw new Error(`${name}: Claude and Codex plugin versions differ`)
   parseVersion(claude.version)
   return claude.version
 }
 
-export function releaseStatus(version, tags) {
-  const versions = tags.filter((tag) => tag.startsWith('jira@')).map((tag) => tag.slice(5))
+export function releaseStatus(name, version, tags) {
+  const prefix = `${name}@`
+  const versions = tags.filter((tag) => tag.startsWith(prefix)).map((tag) => tag.slice(prefix.length))
   for (const previous of versions) parseVersion(previous)
   const latest = versions.sort(compareVersions).at(-1)
   if (!latest) return 'new'
   const comparison = compareVersions(version, latest)
-  if (comparison < 0) throw new Error(`Plugin version ${version} is older than released jira@${latest}`)
+  if (comparison < 0) throw new Error(`Plugin version ${version} is older than released ${name}@${latest}`)
   return comparison === 0 ? 'existing' : 'new'
 }
 
@@ -63,33 +70,47 @@ export function requireVersionBump(previous, current, pluginChanged) {
   }
 }
 
+const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' })
+
+function previousVersion(base, name) {
+  try {
+    return JSON.parse(git(['show', `${base}:plugins/${name}/.claude-plugin/plugin.json`])).version
+  } catch {
+    return undefined // the plugin is new on this branch, so any valid version is acceptable
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const version = pluginVersion()
+    const names = pluginNames()
     if (process.argv[2] === '--base') {
       const base = process.argv[3]
       if (!base) throw new Error('A base ref is required after --base')
-      const changed = execFileSync('git', ['diff', '--name-only', base, 'HEAD', '--', 'plugins/jira/'], {
-        cwd: root,
-        encoding: 'utf8',
-      }).trim()
-      const previous = JSON.parse(
-        execFileSync('git', ['show', `${base}:plugins/jira/.claude-plugin/plugin.json`], {
-          cwd: root,
-          encoding: 'utf8',
-        }),
-      ).version
-      requireVersionBump(previous, version, Boolean(changed))
-      console.log(`Plugin version ${version} is valid against ${base}`)
+      for (const name of names) {
+        const version = pluginVersion(name)
+        const previous = previousVersion(base, name)
+        if (previous === undefined) {
+          console.log(`${name}@${version} is new against ${base}`)
+          continue
+        }
+        const changed = git(['diff', '--name-only', base, 'HEAD', '--', `plugins/${name}/`]).trim()
+        requireVersionBump(previous, version, Boolean(changed))
+        console.log(`${name}@${version} is valid against ${base}`)
+      }
       process.exit(0)
     }
-    const tags = execFileSync('git', ['tag', '--list', 'jira@*'], { cwd: root, encoding: 'utf8' }).trim().split('\n').filter(Boolean)
-    const status = releaseStatus(version, tags)
+    const tags = git(['tag', '--list']).trim().split('\n').filter(Boolean)
+    const releases = names.map((name) => {
+      const version = pluginVersion(name)
+      const status = releaseStatus(name, version, tags)
+      console.log(`${name}@${version}: ${status === 'new' ? 'tag missing' : 'tag exists'}`)
+      return { name, version, tag: `${name}@${version}`, status }
+    })
     if (process.env.GITHUB_OUTPUT) {
       const { appendFileSync } = await import('node:fs')
-      appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=jira@${version}\nstatus=${status}\n`)
+      const tagsToRelease = releases.filter((release) => release.status === 'new').map((release) => release.tag)
+      appendFileSync(process.env.GITHUB_OUTPUT, `tags=${tagsToRelease.join(' ')}\n`)
     }
-    console.log(`jira@${version}: ${status === 'new' ? 'tag missing' : 'tag exists'}`)
   } catch (error) {
     console.error(error.message)
     process.exitCode = 1
