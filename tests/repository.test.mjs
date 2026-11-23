@@ -1,6 +1,6 @@
 // Guards the repository invariants an OSS reviewer would otherwise check by hand:
 // manifest consistency, the required governance files, and the absence of
-// internal-only references in a repository that is intended to become public.
+// internal-only references in a public repository.
 
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
@@ -72,6 +72,24 @@ describe('plugin manifests', () => {
 
       test('version is semver', () => {
         assert.doesNotThrow(() => parseVersion(manifest.version), 'version must be semver')
+      })
+
+      // `plugins/<name>/` is written by the internal release tooling, so these two are fixed
+      // there, not here. They report as todo until the tooling emits public manifests.
+      const releaseToolingTodo = { todo: 'fix in the release tooling that writes plugins/<name>/' }
+
+      test('points at this public repository, not the internal source', releaseToolingTodo, () => {
+        for (const host of ['.claude-plugin', '.codex-plugin']) {
+          const { repository } = readJson('plugins', name, host, 'plugin.json')
+          assert.equal(repository, 'https://github.com/atlassian-labs/atlassian-agent-plugins-beta', `${name}/${host}: repository`)
+        }
+      })
+
+      test('carries no internal release naming', releaseToolingTodo, () => {
+        for (const host of ['.claude-plugin', '.codex-plugin']) {
+          const text = JSON.stringify(readJson('plugins', name, host, 'plugin.json'))
+          assert.doesNotMatch(text, /dogfood/i, `${name}/${host}: published manifests must not use internal release names`)
+        }
       })
 
       test('Claude and Codex manifests have the same version', () => {
@@ -147,11 +165,13 @@ describe('no internal-only references', () => {
     /enterprise\.slack\.com/i,
     /\.stg\.atlassian\.com/i,
     /jplat\.atlassian\.net/i,
+    /bitbucket\.org\/atlassian\//i,
   ]
 
   // The cheers banner is part of the sanctioned Atlassian OSS README template and is
   // served publicly, despite the organisation name.
-  const ALLOWED = [/atlassian-internal\/oss-assets/]
+  // The OSS templates are cited so a Credo reviewer can diff the governance files.
+  const ALLOWED = [/atlassian-internal\/oss-assets/, /bitbucket\.org\/atlassian\/oss-templates/]
 
   const SKIP_DIRS = new Set(['node_modules', '.git'])
   const SCANNED = /\.(md|json|ya?ml|mjs|js|ts)$/
@@ -171,10 +191,28 @@ describe('no internal-only references', () => {
       const lines = readFileSync(path, 'utf8').split('\n')
       lines.forEach((line, index) => {
         if (ALLOWED.some((allowed) => allowed.test(line))) return
+        // Covered by the plugin manifest `repository` test, which tracks the release-tooling fix.
+        if (/^plugins\/[^/]+\/\.(claude|codex)-plugin\/plugin\.json$/.test(relativePath) && /"repository":/.test(line)) return
         for (const pattern of FORBIDDEN) {
           assert.doesNotMatch(line, pattern, `${relativePath}:${index + 1} references an internal-only resource`)
         }
       })
+    })
+  }
+})
+
+describe('dependency licences', () => {
+  // Credo: dependencies only with permissive licences. Checked against the lockfile, which
+  // records every installed package, so a transitive dependency cannot slip through.
+  const PERMISSIVE = new Set(['MIT', 'ISC', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', '0BSD', 'BlueOak-1.0.0', 'CC0-1.0', 'Unlicense'])
+  const lock = readJson('package-lock.json')
+  for (const [path, entry] of Object.entries(lock.packages)) {
+    if (path === '') continue
+    test(path, () => {
+      assert.ok(
+        PERMISSIVE.has(entry.license),
+        `${path} is licensed ${entry.license ?? 'without a licence field'}, which is not on the permissive list`,
+      )
     })
   }
 })

@@ -1,13 +1,20 @@
-# Default code owners for the entire repository.
+# Code owners for the entire repository.
 #
-# Interim: Josh Kay solo while the project is being created. Replace with the owning
-# GitHub team before the repository goes public — a single owner is a review bottleneck
-# and an orphaning risk, which is the thing .atlassian/OWNER exists to prevent.
+# The four repository admins review everything. Each plugin's maintainers are listed for
+# its directory and its README, so a plugin's reviewers stay with the plugin as more are
+# added. Replace the individual handles with a GitHub team once one exists, so ownership
+# survives people moving on; .atlassian/OWNER is the accountable owner either way.
 #
-* @jkay-atlas
+* @jkay-atlas @monners @Chatter5849 @asvita11
 
 # Plugin content — the product is the instruction text, so review it like code.
-/plugins/ @jkay-atlas
+/plugins/jira/ @jkay-atlas @monners @Chatter5849 @asvita11
+/docs/plugins/jira/ @jkay-atlas @monners @Chatter5849 @asvita11
 
-# Release channel wiring: the marketplace manifest decides what beta users receive.
-/.claude-plugin/ @jkay-atlas
+# Release channel wiring: the marketplace manifests decide what beta users receive.
+/.claude-plugin/ @jkay-atlas @monners @Chatter5849 @asvita11
+/.agents/plugins/ @jkay-atlas @monners @Chatter5849 @asvita11
+
+# CI and release scripts publish to beta users on merge.
+/.github/ @jkay-atlas @monners @Chatter5849 @asvita11
+/scripts/ @jkay-atlas @monners @Chatter5849 @asvita11

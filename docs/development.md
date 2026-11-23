@@ -15,7 +15,8 @@ bug.
 ```
 .claude-plugin/marketplace.json   # what beta users can install — the release gate
 .agents/plugins/marketplace.json  # the same listing, read by Codex
-plugins/jira/           # the plugin, written wholesale by each release
+plugins/<name>/                  # one directory per plugin, written wholesale by each release
+docs/plugins/<name>/             # each plugin's README, kept here so releases do not remove it
 docs/                             # consumer-facing documentation
 docs/llm/                         # guidance for coding agents working in this repo
 .github/workflows/validate.yml    # CI
@@ -44,7 +45,7 @@ npm test               # repository invariants: manifests, governance files, no 
 CI runs the same three on pull requests from branches in this repository. Fork pull requests
 skip jobs that execute checked-out code. A fork can propose changes to the workflow itself,
 so GitHub's **Require approval for all external contributors** setting must be enabled
-before this repository becomes public. For private fork PRs, keep secrets and write tokens
+on this public repository. For private fork PRs, keep secrets and write tokens
 disabled and require approval in GitHub's fork workflow settings.
 
 `--strict` validation checks manifests and frontmatter. It does **not** check whether the
@@ -79,15 +80,15 @@ claude plugin marketplace remove atlassian-beta-marketplace
 Merging to `main` publishes. There is no staging environment between your pull request and
 a beta user's next update.
 
-`plugins/jira/` is written by Atlassian's release tooling, which deletes and
-recreates the directory on every release, version included. Do not edit it by hand: the next
+Each `plugins/<name>/` directory is written by Atlassian's release tooling, which deletes and
+recreates it on every release, version included. Do not edit it by hand: the next
 release overwrites it, and nothing kept inside it survives. Beta users have no lockfile, so
 the version in the Claude and Codex plugin manifests is the way they can tell what they are
 running. Both manifests must carry the same semantic version. The root `package.json`
 version belongs to development tooling and is not the plugin version.
 
 On a push to `main`, CI runs validation and tests, then checks the plugin version against
-existing `jira@<version>` tags. A new version creates a GitHub prerelease and tag at that
+existing `<name>@<version>` tags, for each plugin the marketplace lists. A new version creates a GitHub prerelease and tag at that
 commit; an unchanged version does nothing, and a downgrade fails. You can also select
 **Run workflow** on the Validate workflow in GitHub Actions, choose `main`, and run it to
 publish or retry the current version. If its GitHub release already exists, the job does

@@ -30,7 +30,7 @@
 
 ## Public-repo checklist
 
-<!-- This repository is intended to become public. -->
+<!-- This repository is public: anything in a pull request is world-readable. -->
 
 - [ ] No internal-only URLs, hostnames, or Slack channels
 - [ ] No credentials, tokens, cloud IDs, or customer data
