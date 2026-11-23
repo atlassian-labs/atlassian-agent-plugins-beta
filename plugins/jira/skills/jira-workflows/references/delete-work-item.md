@@ -22,7 +22,7 @@ Where the request names neither operation, as "get rid of it" does, ask which is
 
 Default: neither. Where the user chose the close, route to `fields-and-transitions.md`. Where the user chose neither, stop. An item whose `status.statusCategory.key` is already `done` gets no offer and continues to `Subtasks`.
 
-**Subtasks.** List the subtasks with `twg jira workitem query --jql 'parent = <KEY>'`, state every key returned, then offer:
+**Subtasks.** Where the item is an epic, list its children with `jira-cli.mjs epic get --key <KEY> --refresh` (`epics.md`), state every key returned, say so where `childrenTruncated` is true, and state that deleting the epic leaves the children without a parent (`--delete-subtasks` does not remove them). For a non-epic, list the subtasks with `twg jira workitem query --jql 'parent = <KEY>'`, state every key returned, then offer:
 
 | Option | What happens |
 | --- | --- |

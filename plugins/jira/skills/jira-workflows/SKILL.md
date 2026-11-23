@@ -48,6 +48,8 @@ allowed-tools:
 | Create a work item | `references/create-work-item.md` |
 | Read one work item's data, or what one of its description sections means | `references/read-work-item.md` |
 | Find, filter, rank, or triage work items | `references/query-work-items.md` |
+| Show an epic's children, progress, or status | `references/epics.md`: run `jira-cli.mjs epic get --key <KEY> --render`, with `--refresh` when the user asks for current state |
+| List recent, prior, or "my" epics | `references/epics.md`: run `jira-cli.mjs epic list --render`, with `--all` when the user asks across repos |
 | Publish the changes for a work item, open its pull request, or post its writeback | `references/publish-changes.md` |
 | Set up, change, or explain a template for a work item, writeback comment, or pull request description | `references/templates.md` |
 | Decide whether a work item duplicates an existing one | `references/duplicates.md` |
