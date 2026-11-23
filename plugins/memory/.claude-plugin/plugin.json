@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "memory",
+  "displayName": "Teamwork Graph Memory",
+  "version": "0.1.1",
+  "description": "Recall your team's repository knowledge before code work and upload session transcripts to Teamwork Graph for memory extraction when the session ends.",
+  "author": {
+    "name": "Atlassian"
+  },
+  "repository": "https://github.com/atlassian-labs/atlassian-agent-plugins-beta",
+  "keywords": [
+    "atlassian",
+    "twg",
+    "teamwork graph",
+    "memory",
+    "code memory"
+  ]
+}
