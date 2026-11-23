@@ -11,6 +11,7 @@ Select the command by what the request carries:
 | Trigger | Next |
 | --- | --- |
 | The request carries words rather than filters, and the target is Jira | `twg jira workitem search "<text>" --limit <n>` |
+| The request names an epic and asks for its children, progress, or status | `epic get`; see `epics.md` |
 | The request carries a project, assignee, sprint, status, type, priority, label, or time constraint, a custom ordering, or a count | `twg jira workitem query --jql <jql>` |
 | The request names a concrete board and its backlog order decides the answer | `twg jira board query --project <KEY>` for the board ID, then `twg jira board backlog query --board-id <ID>` |
 | Semantic discovery across connected apps is asked for by name | `twg rovo search "<terms>" --app jira`, then read the selected keys. See `read-work-item.md`. |
