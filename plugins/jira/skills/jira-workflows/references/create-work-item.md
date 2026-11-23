@@ -221,17 +221,24 @@ MARKDOWN
 
 `--type` is the preflight verdict's `workType.name`. `work-item create` is the only writer; it stores the new item in the session scope, which links the session to it. Do not run `twg jira workitem create` yourself. The link needs no further read. Pass a required field the user supplied as `--field <customfield_id or name>=<value>`, once per field, and a parent as `--parent <KEY>`.
 
+For an item explicitly tracking work whose pull request is already open, add `--for-pull-request <URL>` with that pull request's URL. Leave the flag off for backlog items and unrelated work, even where the session holds another open pull request.
+
 ### Verify
 
 The verdict takes the shape stated at `Reading A Verdict`. Act on `status` and `reasons[].code`:
 
 | `status` | `code` | Next |
 | --- | --- | --- |
-| `pass` | none | Report `key` and `url` |
-| `warn` | `link-failed` | Report `key`, `url` where it is not `null`, and `detail`. The item exists; do not create again |
+| `pass` | none | Report `key` and `url`; where `tracking` is present, also report the `item` status and assignee |
+| `warn` | `link-failed` | Report `key`, `url` where it is not `null`, and `detail`. Where `tracking` is present, continue at `After An Incomplete Review Claim`. Do not create again |
+| `warn` | `tracking-incomplete` | Report `key`, `url`, and the latest available `item` state, then continue at `After An Incomplete Review Claim` |
 | `warn` | `key-unresolved` | Report `detail` and stop: check the destination in Jira before creating again |
 | `fail` | `create-failed` | Where `fields.requiredMissing` is non-empty, ask for each listed field's value, offering `fields.allowedValue` entries where the field has them, and re-run with `--field`; otherwise report `detail` and stop |
 | `fail` | `twg-not-found` | Report `detail` and stop |
+
+### After An Incomplete Review Claim
+
+Where `tracking.claim` is non-null, apply `claim-work-item.md`'s `Act On The Verdict` to it. If that section directs a retry, run `work-item claim --key <KEY> --for-review`, carrying the create's `--site` and the flags that answer its pending decisions. Where `tracking.claim` is `null`, report the detail and offer that command. Do not repeat `work-item create`.
 
 ## Project Select
 
