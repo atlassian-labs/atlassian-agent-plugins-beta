@@ -1,0 +1,49 @@
+{
+  "description": "Teamwork Graph Memory: memory availability at session start, transcript upload at session end.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/twg-memory-cli.mjs\" hook upload-disclosure",
+            "statusMessage": "Teamwork Graph Memory: checking session upload disclosure",
+            "timeout": 15,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/twg-memory-cli.mjs\" hook memory-availability",
+            "timeout": 10,
+            "statusMessage": "Teamwork Graph Memory: checking memory availability"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/twg-memory-cli.mjs\" hook maintenance",
+            "timeout": 10,
+            "async": true,
+            "statusMessage": "Teamwork Graph Memory: sending analytics and pruning old sessions"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/twg-memory-cli.mjs\" hook session-end-transcript",
+            "timeout": 3,
+            "statusMessage": "Teamwork Graph Memory: uploading the session transcript"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/twg-memory-cli.mjs\" hook session-end-flush",
+            "timeout": 3,
+            "statusMessage": "Teamwork Graph Memory: sending analytics at session end"
+          }
+        ]
+      }
+    ]
+  }
+}
